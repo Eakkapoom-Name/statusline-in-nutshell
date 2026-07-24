@@ -12,6 +12,14 @@ session: 1.24$ | today: 3.87$ | week: 12.50$ | month: 41.02$ | all-time: 210.33$
 5 hours session: 42% used (resets 6:19am) | weekly session: 18% used (resets Jul 27, 6:00pm)
 ```
 
+With emoji mode on, the text labels become icons:
+
+```
+💡 Sonnet 5 (medium) | 🎓 Fable 5 | ⏳ 82.4k/200.0k tokens [████░░░░░░] 41% used
+🪙 1.24$ | ⛅ 3.87$ | 📅 12.50$ | 🗓️ 41.02$ | 💳 210.33$
+🕐 42% used (resets 6:19am) | ♻️ 18% used (resets Jul 27, 6:00pm)
+```
+
 ## Install (plugin, recommended)
 
 The plugin path auto-updates on every push to this repo (there is no version
@@ -60,11 +68,19 @@ request and runs the matching toggle. A few examples:
 ```
 /statusline:statusline-in-nutshell show
 /statusline:statusline-in-nutshell hide
+/statusline:statusline-in-nutshell show model
 /statusline:statusline-in-nutshell hide cost
+/statusline:statusline-in-nutshell hide rate
+/statusline:statusline-in-nutshell cost
 /statusline:statusline-in-nutshell emoji
+/statusline:statusline-in-nutshell emoji on
+/statusline:statusline-in-nutshell emoji off
 /statusline:statusline-in-nutshell status
 /statusline:statusline-in-nutshell reset-all-time-cost
 ```
+
+Plain language works too: "hide the cost line", "show everything",
+"turn on emoji", "what's showing?".
 
 - `show` turns all three lines (model, cost, rate) on.
 - `hide` turns all three lines off. Since that leaves the status line
@@ -72,9 +88,12 @@ request and runs the matching toggle. A few examples:
 - `hide cost` (or `show cost`, `hide rate`, `show model`, and so on) turns
   one line off or on without touching the other two. Naming a line alone,
   with no on/off word, toggles it.
-- `emoji` toggles emoji labels (for example "session:" becomes a coin
-  icon) on top of whichever lines are currently shown. It is independent
-  of the show/hide state and defaults to off.
+- `cost` (or any part name alone, with no on/off word) toggles that line:
+  off if it was on, on if it was off.
+- `emoji` toggles emoji labels (see the second example output above) on
+  top of whichever lines are currently shown; `emoji on` / `emoji off`
+  set it explicitly. It is independent of the show/hide state and
+  defaults to off.
 - `status` prints a table of the current on/off state for model, cost,
   rate, and emoji.
 - `reset-all-time-cost` permanently resets the all-time cost counter to
