@@ -7,7 +7,7 @@ or off independently, right from a slash command, no manual JSON editing.
 Example output (colors and block-bar rendered in the real terminal):
 
 ```
-model: Sonnet 5 (medium) | advisor: Fable 5 | context: 82.4k/200.0k tokens [████░░░░░░] 41% used
+model: Sonnet 5 (medium) | advisor: Fable 5 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
 session: 1.24$ | today: 3.87$ | week: 12.50$ | month: 41.02$ | all-time: 210.33$
 5 hours session: 42% used (resets 6:19am) | weekly session: 18% used (resets Jul 27, 6:00pm)
 ```
@@ -15,7 +15,7 @@ session: 1.24$ | today: 3.87$ | week: 12.50$ | month: 41.02$ | all-time: 210.33$
 With emoji mode on, the text labels become icons:
 
 ```
-💡 Sonnet 5 (medium) | 🎓 Fable 5 | ⏳ 82.4k/200.0k tokens [████░░░░░░] 41% used
+💡 Sonnet 5 (medium) | 🎓 Fable 5 | ⏳ 412.0k/1.0m tokens [████░░░░░░] 41% used
 🪙 1.24$ | ⛅ 3.87$ | 📅 12.50$ | 🗓️ 41.02$ | 💳 210.33$
 🕐 42% used (resets 6:19am) | ♻️ 18% used (resets Jul 27, 6:00pm)
 ```
