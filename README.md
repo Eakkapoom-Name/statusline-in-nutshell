@@ -39,9 +39,9 @@ bundled scripts changed.
 
 ## Install via marketplace
 
-The plugin path auto-updates on every push to this repo (there is no version
-field, updates are commit-SHA based) and sets itself up with zero manual
-steps.
+The plugin path updates with releases: installed copies pick up changes
+when the plugin's version number is bumped (each release also carries a
+matching git tag). It sets itself up with zero manual steps.
 
 ```bash
 /plugin marketplace add Eakkapoom-Name/statusline-in-nutshell
