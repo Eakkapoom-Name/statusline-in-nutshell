@@ -20,7 +20,24 @@ With emoji mode on, the text labels become icons:
 🕐 42% used (resets 6:19am) | ♻️ 18% used (resets Jul 27, 6:00pm)
 ```
 
-## Install (plugin, recommended)
+## Install via npx
+
+If you would rather not add a plugin marketplace, install the skill
+directly with the `skills` CLI:
+
+```bash
+npx skills add Eakkapoom-Name/statusline-in-nutshell
+```
+
+This installs a flat (non-namespaced) command, `/statusline-in-nutshell`,
+instead of `/statusline:statusline-in-nutshell`. The npx path does not ship
+the `SessionStart` hook, so there is no background auto-install: the first
+time you run the skill, its own setup step (step 0 in `SKILL.md`) installs
+the three scripts to `~/.claude/` and registers the status line for you,
+the same way the hook would. Every run after that is a no-op unless the
+bundled scripts changed.
+
+## Install via marketplace
 
 The plugin path auto-updates on every push to this repo (there is no version
 field, updates are commit-SHA based) and sets itself up with zero manual
@@ -42,23 +59,6 @@ After install, the toggle command is:
 ```
 /statusline:statusline-in-nutshell
 ```
-
-## Install (npx, no plugin manager)
-
-If you would rather not add a plugin marketplace, install the skill
-directly with the `skills` CLI:
-
-```bash
-npx skills add Eakkapoom-Name/statusline-in-nutshell
-```
-
-This installs a flat (non-namespaced) command, `/statusline-in-nutshell`,
-instead of `/statusline:statusline-in-nutshell`. The npx path does not ship
-the `SessionStart` hook, so there is no background auto-install: the first
-time you run the skill, its own setup step (step 0 in `SKILL.md`) installs
-the three scripts to `~/.claude/` and registers the status line for you,
-the same way the hook would. Every run after that is a no-op unless the
-bundled scripts changed.
 
 ## Usage
 
