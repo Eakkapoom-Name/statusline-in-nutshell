@@ -43,8 +43,9 @@ argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-co
    `status` table preformatted). No prose, no unchanged-part mentions.
 4. Before a toggle that leaves all three off, ask: "Hiding all parts will
    leave the status line blank. Do you want to proceed?" Wait for yes/no.
-5. Acknowledge any yes/no confirmation briefly ("Abort." / "Done."), then
-   act or stop.
+5. Reply to any yes/no confirmation with exactly "Abort." or "Done." —
+   nothing else. Never restate the question, never add prose, even for a
+   stray yes/no with no pending action.
 
 ## Resetting all-time cost
 
