@@ -1,0 +1,12 @@
+{
+  "name": "statusline-in-nutshell",
+  "owner": { "name": "Eakkapoom-Name" },
+  "description": "Marketplace for the statusline plugin: a toggleable Claude Code status line with cost and rate-limit tracking.",
+  "plugins": [
+    {
+      "name": "statusline",
+      "source": "./",
+      "description": "Toggleable Claude Code status line with cost and rate-limit tracking."
+    }
+  ]
+}
