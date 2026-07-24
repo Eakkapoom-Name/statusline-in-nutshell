@@ -1,5 +1,5 @@
 ---
-name: statusline-in-nutshell
+name: nutshell
 description: Use when the user wants to show or hide parts of their Claude Code status line, or toggle emoji labels.
 argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-cost"
 ---

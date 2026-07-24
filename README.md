@@ -29,8 +29,8 @@ directly with the `skills` CLI:
 npx skills add Eakkapoom-Name/statusline-in-nutshell
 ```
 
-This installs a flat (non-namespaced) command, `/statusline-in-nutshell`,
-instead of `/statusline:statusline-in-nutshell`. The npx path does not ship
+This installs a flat (non-namespaced) command, `/nutshell`,
+instead of `/nutshell-statusline:nutshell`. The npx path does not ship
 the `SessionStart` hook, so there is no background auto-install: the first
 time you run the skill, its own setup step (step 0 in `SKILL.md`) installs
 the three scripts to `~/.claude/` and registers the status line for you,
@@ -45,7 +45,7 @@ matching git tag). It sets itself up with zero manual steps.
 
 ```bash
 /plugin marketplace add Eakkapoom-Name/statusline-in-nutshell
-/plugin install statusline@statusline-in-nutshell
+/plugin install nutshell-statusline@statusline-in-nutshell
 ```
 
 Start (or restart) a session. A `SessionStart` hook runs silently in the
@@ -57,7 +57,7 @@ the status line appears at the bottom of the terminal.
 After install, the toggle command is:
 
 ```
-/statusline:statusline-in-nutshell
+/nutshell-statusline:nutshell
 ```
 
 ## Usage
@@ -66,17 +66,17 @@ Talk to the skill in plain language after the slash command; it parses the
 request and runs the matching toggle. A few examples:
 
 ```
-/statusline:statusline-in-nutshell show
-/statusline:statusline-in-nutshell hide
-/statusline:statusline-in-nutshell show model
-/statusline:statusline-in-nutshell hide cost
-/statusline:statusline-in-nutshell hide rate
-/statusline:statusline-in-nutshell cost
-/statusline:statusline-in-nutshell emoji
-/statusline:statusline-in-nutshell emoji on
-/statusline:statusline-in-nutshell emoji off
-/statusline:statusline-in-nutshell status
-/statusline:statusline-in-nutshell reset-all-time-cost
+/nutshell-statusline:nutshell show
+/nutshell-statusline:nutshell hide
+/nutshell-statusline:nutshell show model
+/nutshell-statusline:nutshell hide cost
+/nutshell-statusline:nutshell hide rate
+/nutshell-statusline:nutshell cost
+/nutshell-statusline:nutshell emoji
+/nutshell-statusline:nutshell emoji on
+/nutshell-statusline:nutshell emoji off
+/nutshell-statusline:nutshell status
+/nutshell-statusline:nutshell reset-all-time-cost
 ```
 
 Plain language works too: "hide the cost line", "show everything",
@@ -100,8 +100,8 @@ Plain language works too: "hide the cost line", "show everything",
   zero (today, week, and month are unaffected). It requires `ccusage` and
   asks for confirmation first, since it cannot be undone.
 
-(npx install: drop the `statusline:` prefix, for example
-`/statusline-in-nutshell hide cost`.)
+(npx install: drop the `nutshell-statusline:` prefix, for example
+`/nutshell hide cost`.)
 
 ## Requirements
 
@@ -152,7 +152,7 @@ all-time cost windows additionally need `ccusage`, same as above.
 
 ## Uninstall
 
-1. Remove the plugin: run `/plugin`, then remove the `statusline` plugin
+1. Remove the plugin: run `/plugin`, then remove the `nutshell-statusline` plugin
    (and, if you want, the `statusline-in-nutshell` marketplace) from the
    interactive menu.
 2. Back up your settings, then delete the three installed scripts and the

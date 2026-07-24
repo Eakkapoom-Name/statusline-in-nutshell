@@ -1,7 +1,7 @@
 {
-  "name": "statusline",
-  "version": "0.1.2",
-  "description": "Toggleable Claude Code status line: model/context, cost windows, rate limits, emoji labels. Sections switch on/off via /statusline:statusline-in-nutshell.",
+  "name": "nutshell-statusline",
+  "version": "0.1.3",
+  "description": "Toggleable Claude Code status line: model/context, cost windows, rate limits, emoji labels. Sections switch on/off via /nutshell-statusline:nutshell.",
   "author": { "name": "Eakkapoom-Name" },
   "repository": "https://github.com/Eakkapoom-Name/statusline-in-nutshell",
   "license": "MIT",
