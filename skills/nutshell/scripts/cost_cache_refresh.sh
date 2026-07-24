@@ -28,6 +28,12 @@ epoch_date() {
   date -d "@${1}" "$2" 2>/dev/null || date -r "${1}" "$2" 2>/dev/null
 }
 
+# Subtract N calendar days, GNU (-d) or BSD/macOS (-v). Calendar-day, not
+# epoch-seconds: N*86400 lands on the wrong date across a DST transition.
+days_ago_date() {
+  date -d "-${1} days" "+%Y-%m-%d" 2>/dev/null || date -v-"${1}"d "+%Y-%m-%d" 2>/dev/null
+}
+
 # Write $1 (JSON text) to file $2 atomically, but only if it is a non-empty
 # JSON object. Protects the ledger/baseline/cache from being truncated (or
 # replaced with garbage) if an upstream jq step silently produced empty or
@@ -68,10 +74,8 @@ command -v ccusage >/dev/null 2>&1 || exit 0
 json=$(ccusage daily --json 2>/dev/null) || exit 0
 
 today=$(date +%Y-%m-%d)
-now_epoch=$(date +%s)
 days_since_sunday=$(date +%w)  # 0=Sun ... 6=Sat (portable across GNU/BSD date)
-week_start_epoch=$((now_epoch - days_since_sunday * 86400))
-week_start=$(epoch_date "$week_start_epoch" "+%Y-%m-%d")
+week_start=$(days_ago_date "$days_since_sunday")
 month_prefix=$(date +%Y-%m)
 
 # Existing ledger, or an empty object if it's missing / unreadable / corrupt.

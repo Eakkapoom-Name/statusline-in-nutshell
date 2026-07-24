@@ -5,16 +5,38 @@
 
 input=$(cat)
 
-model=$(echo "$input" | jq -r '.model.display_name // empty')
-effort=$(echo "$input" | jq -r '.effort.level // empty')
+# One jq call instead of one per field. `// ""` not `// empty` (empty is a
+# zero-output generator, would drop the whole array on a null field).
+# Delimiter is \x1f, not @tsv's tab: `read` collapses consecutive tab/space
+# delimiters even when IFS is set to just one of them, silently shifting
+# fields whenever one is empty (routine: absent .effort, absent .cost).
+# \x1f isn't IFS whitespace, so it doesn't collapse.
+IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost five_pct five_reset week_pct week_reset five_hour_present week_present < <(
+  jq -r '[
+      (.model.display_name // ""),
+      (.effort.level // ""),
+      (.context_window.used_percentage // ""),
+      (.context_window.total_input_tokens // ""),
+      (.context_window.context_window_size // ""),
+      (.cost.total_cost_usd // ""),
+      (.rate_limits.five_hour.used_percentage // ""),
+      (.rate_limits.five_hour.resets_at // ""),
+      (.rate_limits.seven_day.used_percentage // ""),
+      (.rate_limits.seven_day.resets_at // ""),
+      (.rate_limits.five_hour != null),
+      (.rate_limits.seven_day != null)
+    ] | map(tostring) | join("\u001f")' <<< "$input" 2>/dev/null
+)
 advisor_raw=$(jq -r '.advisorModel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
 
-# Map an advisor model alias to its full display name.
+# Alias -> display name. settings.json only stores the bare alias, no
+# runtime lookup exists for the resolved name, so this WILL drift on new
+# model releases (opus was "Opus 4.8", now "Opus 5" as of 2026-07).
 advisor_display_name() {
   case "$1" in
     fable) printf 'Fable 5' ;;
     sonnet) printf 'Sonnet 5' ;;
-    opus) printf 'Opus 4.8' ;;
+    opus) printf 'Opus 5' ;;
     haiku) printf 'Haiku 4.5' ;;
     *) printf '%s' "$1" ;;
   esac
@@ -22,10 +44,6 @@ advisor_display_name() {
 
 advisor=""
 [ -n "$advisor_raw" ] && advisor=$(advisor_display_name "$advisor_raw")
-ctx_used=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
-ctx_used_tokens=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty')
-ctx_total_tokens=$(echo "$input" | jq -r '.context_window.context_window_size // empty')
-cost=$(echo "$input" | jq -r '.cost.total_cost_usd // empty')
 
 # Section visibility — the model / cost / usage-rate parts can each be hidden via
 # ~/.claude/statusline.config.json (toggled by statusline-toggle.sh or the /statusline
@@ -35,21 +53,22 @@ STATUSLINE_CONFIG_FILE="$HOME/.claude/statusline.config.json"
 show_model=true
 show_cost=true
 show_rate=true
-if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
-  # NOTE: read the raw value, not `.key // "true"` — jq's // treats a literal
-  # `false` as empty and would fall through to the default, so `false` would never
-  # be detected. A missing key returns "null" (not "false") => stays shown (fail open).
-  [ "$(jq -r '.model' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)" = "false" ] && show_model=false
-  [ "$(jq -r '.cost' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)" = "false" ] && show_cost=false
-  [ "$(jq -r '.rate' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)" = "false" ] && show_rate=false
-fi
-
 # Emoji mode — replaces text labels ("model:", "session:", ...) with icons.
 # Fail CLOSED (default off): unlike show_*, a missing/bad key must not
 # silently switch the status line to icons the user didn't ask for.
 emoji_mode=false
 if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
-  [ "$(jq -r '.emoji' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)" = "true" ] && emoji_mode=true
+  # Raw value, not `.key // "true"` (// treats false as empty, would hide
+  # it). Missing key -> "null" text, so show_* stays shown (fail open),
+  # emoji stays off (fail closed). Duplicated in statusline-toggle.sh's
+  # get_part()/get_emoji(); keep both in sync by hand.
+  IFS=$'\x1f' read -r cfg_model cfg_cost cfg_rate cfg_emoji < <(
+    jq -r '[(.model|tostring), (.cost|tostring), (.rate|tostring), (.emoji|tostring)] | join("\u001f")' "$STATUSLINE_CONFIG_FILE" 2>/dev/null
+  )
+  [ "$cfg_model" = "false" ] && show_model=false
+  [ "$cfg_cost" = "false" ] && show_cost=false
+  [ "$cfg_rate" = "false" ] && show_rate=false
+  [ "$cfg_emoji" = "true" ] && emoji_mode=true
 fi
 
 # Today / weekly / monthly / all-time cost come from a background-refreshed
@@ -66,11 +85,10 @@ monthly_cost=""
 all_time_cost=""
 cache_updated_at=0
 if [ -f "$COST_CACHE_FILE" ]; then
-  today_cost=$(jq -r '.today_cost // empty' "$COST_CACHE_FILE" 2>/dev/null)
-  weekly_cost=$(jq -r '.weekly_cost // empty' "$COST_CACHE_FILE" 2>/dev/null)
-  monthly_cost=$(jq -r '.monthly_cost // empty' "$COST_CACHE_FILE" 2>/dev/null)
-  all_time_cost=$(jq -r '.all_time_cost // empty' "$COST_CACHE_FILE" 2>/dev/null)
-  cache_updated_at=$(jq -r '.updated_at // 0' "$COST_CACHE_FILE" 2>/dev/null)
+  # One jq call, five fields (same // "" and \x1f reasoning as above).
+  IFS=$'\x1f' read -r today_cost weekly_cost monthly_cost all_time_cost cache_updated_at < <(
+    jq -r '[(.today_cost // ""), (.weekly_cost // ""), (.monthly_cost // ""), (.all_time_cost // ""), (.updated_at // 0)] | map(tostring) | join("\u001f")' "$COST_CACHE_FILE" 2>/dev/null
+  )
 fi
 
 # Invalid JSON in the cache file leaves cache_updated_at empty or non-numeric
@@ -171,10 +189,8 @@ render_bar() {
   printf '%b' "$bar"
 }
 
-five_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-five_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
-week_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
-week_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
+# five_pct/five_reset/week_pct/week_reset/five_hour_present/week_present are
+# already set by the combined stdin jq call near the top of the script.
 
 # Run `date` for a unix epoch with the given format, GNU (-d) or BSD (-r) style.
 epoch_date() {
@@ -235,6 +251,10 @@ else
   line1+=("$(label context) warming up")
 fi
 
+# "warming up" only if the rate_limits object exists but its percentage
+# hasn't landed yet. If the object is absent (e.g. metered API-key billing
+# has no rate limits at all), skip it so the row stays hidden instead of
+# showing "warming up" forever.
 if [ -n "$five_pct" ]; then
   reset_str=$(fmt_reset "$five_reset")
   if [ -n "$reset_str" ]; then
@@ -242,7 +262,7 @@ if [ -n "$five_pct" ]; then
   else
     line3+=("$(printf '%s %b%.0f%%%b used' "$(label rate_five)" "$ORANGE" "$five_pct" "$RESET")")
   fi
-else
+elif [ "$five_hour_present" = "true" ]; then
   line3+=("$(label rate_five) warming up")
 fi
 
@@ -253,7 +273,7 @@ if [ -n "$week_pct" ]; then
   else
     line3+=("$(printf '%s %b%.0f%%%b used' "$(label rate_week)" "$ORANGE" "$week_pct" "$RESET")")
   fi
-else
+elif [ "$week_present" = "true" ]; then
   line3+=("$(label rate_week) warming up")
 fi
 

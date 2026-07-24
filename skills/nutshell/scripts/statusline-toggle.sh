@@ -58,6 +58,7 @@ ensure_config() {
 # Read a part's current value ("true"/"false"); missing key defaults to true.
 # Don't use `.key // true` — jq's // treats a literal `false` as empty and would
 # wrongly return true, so read the raw value and only "false" counts as off.
+# Duplicated in statusline.sh (no shared lib file); keep both in sync.
 get_part() {
   local v
   v="$(jq -r ".${1}" "$CONFIG" 2>/dev/null)"
