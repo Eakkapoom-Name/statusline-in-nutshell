@@ -212,6 +212,11 @@ fmt_reset() {
   [ -z "$epoch" ] && return
   local reset_date today time_str
   reset_date=$(epoch_date "$epoch" "+%Y-%m-%d")
+  # Unparseable epoch (both GNU -d and BSD -r failed, e.g. an ISO-8601
+  # string instead of unix seconds): omit the reset time entirely, rather
+  # than falling through to the not-today branch and rendering a
+  # malformed "(resets , )" from two empty date/time strings.
+  [ -z "$reset_date" ] && return
   today=$(date "+%Y-%m-%d" 2>/dev/null)
   time_str=$(fmt_time "$epoch")
   if [ "$reset_date" != "$today" ]; then
