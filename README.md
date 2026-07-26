@@ -68,6 +68,7 @@ Talk to the skill in plain language after the slash command:
 /nutshell-statusline:nutshell emoji off
 /nutshell-statusline:nutshell status
 /nutshell-statusline:nutshell reset-all-time-cost
+/nutshell-statusline:nutshell uninstall
 ```
 
 Or just say it: "hide the cost line", "show everything", "turn on emoji",
@@ -84,6 +85,8 @@ Or just say it: "hide the cost line", "show everything", "turn on emoji",
 - `reset-all-time-cost` wipes the all-time cost counter for good (today,
   week, month are untouched). Needs `ccusage`, asks for confirmation
   first since there's no undo.
+- `uninstall` removes the status line and the installed scripts, see the
+  Uninstall section below.
 
 (npx install: drop the `nutshell-statusline:` prefix, e.g. `/nutshell hide cost`.)
 
@@ -119,19 +122,25 @@ Or just say it: "hide the cost line", "show everything", "turn on emoji",
 
 ## Uninstall
 
-1. Run `/plugin`, remove the `nutshell-statusline` plugin (and the
-   marketplace too, if you want) from the menu.
-2. Back up your settings, then remove the installed scripts and the
-   `statusLine` key:
+Run the skill and ask it to uninstall (`/nutshell uninstall`, or
+`/nutshell-statusline:nutshell uninstall` for the marketplace install).
+It confirms first, then cleans up.
+
+Marketplace install: remove the plugin from the `/plugin` menu first,
+otherwise its `SessionStart` hook reinstalls the scripts on the next
+session.
+
+By default this keeps `statusline.config.json` and your cost history.
+Ask for a purge (or pass `--purge`) to wipe those too. `settings.json`
+is backed up to `settings.json.bak` first.
+
+Manual fallback, if you'd rather not go through the skill:
 
 ```bash
 cp ~/.claude/settings.json ~/.claude/settings.json.bak
 rm ~/.claude/statusline.sh ~/.claude/statusline-toggle.sh ~/.claude/cost_cache_refresh.sh
 jq 'del(.statusLine)' ~/.claude/settings.json > ~/.claude/settings.json.new && mv ~/.claude/settings.json.new ~/.claude/settings.json
 ```
-
-This leaves `statusline.config.json` and the cost/lock files in place.
-Delete those by hand too if you want a clean slate.
 
 ## License
 

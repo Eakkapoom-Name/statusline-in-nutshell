@@ -1,7 +1,7 @@
 ---
 name: nutshell
 description: Use when the user wants to show or hide parts of their Claude Code status line, or toggle emoji labels.
-argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-cost"
+argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-cost | uninstall"
 ---
 
 # Status Line Section Toggle
@@ -55,3 +55,23 @@ permanently resets your all-time cost. Today/week/month stay unaffected.
 Proceed?" Only after yes, run
 `bash ~/.claude/statusline-toggle.sh reset-all-time --yes`.
 Without `--yes` it only warns and does nothing.
+
+## Uninstalling
+
+Triggered by requests like "uninstall", "remove the status line". Ask
+first: "This removes the status line registration and deletes the
+installed scripts from ~/.claude/. Your toggle config and cost history
+are kept. Proceed?" (If the user explicitly asked to also wipe config
+and cost history, fold that in: "...deletes the installed scripts from
+~/.claude/, and also wipes your toggle config and cost history. Proceed?")
+Wait for yes/no, reply exactly "Done." or "Abort.".
+
+If this is a marketplace/plugin install, first tell the user to remove
+the `nutshell-statusline` plugin via the `/plugin` menu, since its
+`SessionStart` hook would otherwise reinstall the scripts next session.
+npx installs have no hook, so no extra step is needed there.
+
+Only after yes, run `bash ~/.claude/statusline-toggle.sh uninstall --yes`
+(or `bash ~/.claude/statusline-toggle.sh uninstall --yes --purge` if the
+user asked to also wipe config/cost history). Without `--yes` it only
+warns and does nothing.

@@ -33,6 +33,7 @@ Usage:
   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle; default off
   statusline-toggle.sh status
   statusline-toggle.sh reset-all-time --yes     # reset all-time cost to 0 (keeps today/week/month)
+  statusline-toggle.sh uninstall --yes [--purge] # remove registration + installed scripts
 
 Parts:
   model  model name / advisor / context bar               (line 1)
@@ -116,9 +117,11 @@ print_one() {
 
 command -v jq >/dev/null 2>&1 || { echo "statusline-toggle: jq is required" >&2; exit 1; }
 
-ensure_config
-
 cmd="${1:-}"
+
+# Skip for uninstall: it must not recreate or rewrite the config it may be
+# about to remove (and its warn path must leave every file untouched).
+[ "$cmd" != "uninstall" ] && ensure_config
 
 case "$cmd" in
   status)
@@ -186,12 +189,62 @@ case "$cmd" in
     fi
     echo "done — all-time cost is now 0; today / week / month are unchanged."
     ;;
+  uninstall)
+    yes=false
+    purge=false
+    for a in "$@"; do
+      case "$a" in
+        --yes) yes=true ;;
+        --purge) purge=true ;;
+      esac
+    done
+    if [ "$yes" != true ]; then
+      echo "statusline-toggle: 'uninstall' removes the status line registration from settings.json" >&2
+      echo "and deletes the installed scripts (statusline.sh, statusline-toggle.sh," >&2
+      echo "cost_cache_refresh.sh) from ~/.claude/. Your toggle config and cost history are kept" >&2
+      echo "unless --purge is also given. Re-run to confirm:" >&2
+      echo "  statusline-toggle.sh uninstall --yes [--purge]" >&2
+      exit 1
+    fi
+    SETTINGS="$HOME/.claude/settings.json"
+    backed_up=false
+    if [ -f "$SETTINGS" ]; then
+      cp "$SETTINGS" "${SETTINGS}.bak"
+      backed_up=true
+      if jq -e . "$SETTINGS" >/dev/null 2>&1; then
+        tmp="$(mktemp "${SETTINGS}.XXXXXX")"
+        if jq 'del(.statusLine)' "$SETTINGS" > "$tmp" 2>/dev/null; then
+          mv "$tmp" "$SETTINGS"
+        else
+          rm -f "$tmp"
+        fi
+      fi
+    fi
+    rm -f "$HOME/.claude/statusline.sh" "$REFRESH"
+    if [ "$purge" = true ]; then
+      rm -f "$CONFIG" \
+            "$HOME/.claude/.cost_cache.json" \
+            "$HOME/.claude/.cost_ledger.json" \
+            "$HOME/.claude/.cost_baseline.json" \
+            "$HOME/.claude/.cost_cache.lock" \
+            "$HOME/.claude/.statusline-sync.lock"
+    fi
+    settings_note=""
+    [ "$backed_up" = true ] && settings_note=" settings.json backed up to settings.json.bak."
+    if [ "$purge" = true ]; then
+      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh, and purged config/cost/lock files.${settings_note}"
+    else
+      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh.${settings_note} Config and cost history were kept."
+    fi
+    rm -f "$HOME/.claude/statusline-toggle.sh"
+    exit 0
+    ;;
   "")
     usage
     exit 1
     ;;
   *)
-    echo "statusline-toggle: unknown part '$cmd' (expected model|cost|rate|all|emoji|status|reset-all-time)" >&2
+    echo "statusline-toggle: unknown part '$cmd' (expected model|cost|rate|all|emoji|status|reset-all-time|uninstall)" >&2
     usage
     exit 1
     ;;
