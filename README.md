@@ -130,6 +130,9 @@ Marketplace install: remove the plugin from the `/plugin` menu first,
 otherwise its `SessionStart` hook reinstalls the scripts on the next
 session.
 
+npx install: run the uninstall first, then drop the skill itself with
+`npx skills remove nutshell`.
+
 By default this keeps `statusline.config.json` and your cost history.
 Ask for a purge (or pass `--purge`) to wipe those too. `settings.json`
 is backed up to `settings.json.bak` first.

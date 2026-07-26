@@ -69,7 +69,9 @@ Wait for yes/no, reply exactly "Done." or "Abort.".
 If this is a marketplace/plugin install, first tell the user to remove
 the `nutshell-statusline` plugin via the `/plugin` menu, since its
 `SessionStart` hook would otherwise reinstall the scripts next session.
-npx installs have no hook, so no extra step is needed there.
+npx installs have no hook, so no step is needed before the script; after
+it finishes, tell the user to run `npx skills remove nutshell` to remove
+the skill itself.
 
 Only after yes, run `bash ~/.claude/statusline-toggle.sh uninstall --yes`
 (or `bash ~/.claude/statusline-toggle.sh uninstall --yes --purge` if the
