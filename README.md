@@ -1,10 +1,8 @@
 # statusline-in-nutshell
 
-A three-line Claude Code status line: model, effort, and context on line 1,
-cost windows on line 2, and rate-limit usage on line 3. Each line toggles on
-or off independently, right from a slash command, no manual JSON editing.
-
-Example output (colors and block-bar rendered in the real terminal):
+A three-line status line for Claude Code: model/effort/context on line 1,
+cost windows on line 2, rate-limit usage on line 3. Toggle each line on or
+off with a slash command, no manual JSON editing.
 
 ```
 model: Sonnet 5 (medium) | advisor: Fable 5 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
@@ -12,7 +10,7 @@ session: 1.24$ | today: 3.87$ | week: 12.50$ | month: 41.02$ | all-time: 210.33$
 5 hours session: 42% used (resets 6:19am) | weekly session: 18% used (resets Jul 27, 6:00pm)
 ```
 
-With emoji mode on, the text labels become icons:
+Emoji mode swaps the text labels for icons:
 
 ```
 💡 Sonnet 5 (medium) | 🎓 Fable 5 | ⏳ 412.0k/1.0m tokens [████░░░░░░] 41% used
@@ -20,50 +18,43 @@ With emoji mode on, the text labels become icons:
 🕐 42% used (resets 6:19am) | ♻️ 18% used (resets Jul 27, 6:00pm)
 ```
 
-## Install via npx
+## Platform support
 
-If you would rather not add a plugin marketplace, install the skill
-directly with the `skills` CLI:
+Ubuntu only for now. macOS and WSL support is paused, not dropped for
+good, just no way to test them at the moment. Will pick it back up once
+that's sorted.
 
-```bash
-npx skills add Eakkapoom-Name/statusline-in-nutshell
-```
+## Install
 
-This installs a flat (non-namespaced) command, `/nutshell`,
-instead of `/nutshell-statusline:nutshell`. The npx path does not ship
-the `SessionStart` hook, so there is no background auto-install: the first
-time you run the skill, its own setup step (step 0 in `SKILL.md`) installs
-the three scripts to `~/.claude/` and registers the status line for you,
-the same way the hook would. Every run after that is a no-op unless the
-bundled scripts changed.
-
-## Install via marketplace
-
-The plugin path updates with releases: installed copies pick up changes
-when the plugin's version number is bumped (each release also carries a
-matching git tag). It sets itself up with zero manual steps.
+**Marketplace (recommended):** updates itself when the plugin version
+bumps, and a `SessionStart` hook keeps your installed scripts in sync
+automatically.
 
 ```bash
 /plugin marketplace add Eakkapoom-Name/statusline-in-nutshell
 /plugin install nutshell-statusline@statusline-in-nutshell
 ```
 
-Start (or restart) a session. A `SessionStart` hook runs silently in the
-background: it copies the three bundled scripts into `~/.claude/` and
-registers the status line in `~/.claude/settings.json`. Nothing is printed
-and nothing blocks the session, so the first sign it worked is simply that
-the status line appears at the bottom of the terminal.
+Restart your session. The hook copies the scripts into `~/.claude/` and
+registers the status line in the background, nothing to watch for beyond
+the status line showing up.
 
-After install, the toggle command is:
+**npx (no marketplace):** installs the skill directly, flat command
+`/nutshell` instead of `/nutshell-statusline:nutshell`.
 
+```bash
+npx skills add Eakkapoom-Name/statusline-in-nutshell --agent claude-code
 ```
-/nutshell-statusline:nutshell
-```
+
+There's no background hook on this path, so syncing only happens when you
+invoke the skill. First run installs everything; after that, an update to
+this repo won't reach your machine until you run `/nutshell` again, that's
+what triggers the sync check. Want updates to land automatically? Use the
+marketplace install instead.
 
 ## Usage
 
-Talk to the skill in plain language after the slash command; it parses the
-request and runs the matching toggle. A few examples:
+Talk to the skill in plain language after the slash command:
 
 ```
 /nutshell-statusline:nutshell show
@@ -79,83 +70,58 @@ request and runs the matching toggle. A few examples:
 /nutshell-statusline:nutshell reset-all-time-cost
 ```
 
-Plain language works too: "hide the cost line", "show everything",
-"turn on emoji", "what's showing?".
+Or just say it: "hide the cost line", "show everything", "turn on emoji",
+"what's showing?".
 
-- `show` turns all three lines (model, cost, rate) on.
-- `hide` turns all three lines off. Since that leaves the status line
-  blank, the skill asks for confirmation before doing it.
-- `hide cost` (or `show cost`, `hide rate`, `show model`, and so on) turns
-  one line off or on without touching the other two. Naming a line alone,
-  with no on/off word, toggles it.
-- `cost` (or any part name alone, with no on/off word) toggles that line:
-  off if it was on, on if it was off.
-- `emoji` toggles emoji labels (see the second example output above) on
-  top of whichever lines are currently shown; `emoji on` / `emoji off`
-  set it explicitly. It is independent of the show/hide state and
-  defaults to off.
-- `status` prints a table of the current on/off state for model, cost,
-  rate, and emoji.
-- `reset-all-time-cost` permanently resets the all-time cost counter to
-  zero (today, week, and month are unaffected). It requires `ccusage` and
-  asks for confirmation first, since it cannot be undone.
+- `show` / `hide` turns all three lines on or off. Hiding everything
+  leaves the status line blank, so the skill asks you to confirm first.
+- `hide cost` / `show model` / etc. toggles one line without touching the
+  others. Name a line with no on/off word and it flips whatever state
+  it's currently in.
+- `emoji` (or `emoji on` / `emoji off`) swaps text labels for icons. It's
+  independent of which lines are shown, and defaults to off.
+- `status` prints the current on/off state for model, cost, rate, emoji.
+- `reset-all-time-cost` wipes the all-time cost counter for good (today,
+  week, month are untouched). Needs `ccusage`, asks for confirmation
+  first since there's no undo.
 
-(npx install: drop the `nutshell-statusline:` prefix, for example
-`/nutshell hide cost`.)
+(npx install: drop the `nutshell-statusline:` prefix, e.g. `/nutshell hide cost`.)
 
 ## Requirements
 
 - `bash`
-- `jq`, required. The status line renderer reads JSON with it; the toggle
-  script and the cost refresher read and write JSON with it. The toggle
-  script exits with a clear "jq is required" error if it is missing.
-- `ccusage`, optional. Without it, session cost (line 2's "session:"
-  figure, taken directly from the Claude Code status line payload) still
-  works. With it, a background refresh job additionally populates
-  today/week/month/all-time cost windows and enables
+- `jq`, required. Everything here reads or writes its JSON through it. The
+  toggle script fails with a clear error if it's missing.
+- `ccusage`, optional. Session cost still shows without it (that figure
+  comes straight from Claude Code's own status line payload). With it, a
+  background job also fills in today/week/month/all-time cost and unlocks
   `reset-all-time-cost`.
-
-Supported platforms: Linux, macOS, and WSL. The scripts are bash (not
-plain POSIX shell) and stick to tools available in macOS's stock system
-bash and BSD userland, so no GNU coreutils or Homebrew install is needed;
-where GNU-only tools like `flock` or `timeout` would otherwise be used,
-the scripts degrade gracefully without them. Native Windows (without WSL)
-is still not supported. `reset-all-time-cost` and the today/week/month/
-all-time cost windows additionally need `ccusage`, same as above.
 
 ## What gets written where
 
 - The three scripts (`statusline.sh`, `statusline-toggle.sh`,
-  `cost_cache_refresh.sh`) are copied to `~/.claude/`. If a copy already
-  exists there and differs from the bundled version, the existing file is
-  backed up to `<name>.bak` before being overwritten.
-- The status line is registered as `~/.claude/settings.json`'s
-  `statusLine` key. `settings.json` is backed up to `settings.json.bak`
-  before any change. If `settings.json` already existed but was not valid
-  JSON, its original bytes are preserved in `settings.json.bak` before the
-  file is repaired, so nothing is lost.
-- Your own settings, `~/.claude/statusline.config.json` (which parts and
-  emoji mode are on or off) and the cost tracking files,
-  `~/.claude/.cost_cache.json`, `~/.claude/.cost_ledger.json`, and
-  `~/.claude/.cost_baseline.json` (the `reset-all-time-cost` snapshot), are
-  never touched by the sync step. Only the toggle script writes
-  `statusline.config.json`, and only `cost_cache_refresh.sh` writes the
-  cost cache, ledger, and baseline.
-- Two lock files coordinate concurrent runs and hold no user data:
-  `~/.claude/.statusline-sync.lock` (sync hook) and
-  `~/.claude/.cost_cache.lock` (cost refresher).
-- Concurrent sessions starting at the same time are safe: the sync step is
-  guarded with `flock` when available, so two `SessionStart` hooks running
-  at once cannot race each other or clobber a backup. Stock macOS does not
-  ship `flock(1)` (it is only available via Homebrew's util-linux); on
-  such a system, the scripts proceed without a lock rather than failing.
+  `cost_cache_refresh.sh`) get copied to `~/.claude/`. If one's already
+  there and differs from the bundled version, it's backed up to
+  `<name>.bak` first.
+- The status line gets registered under `~/.claude/settings.json`'s
+  `statusLine` key. `settings.json` is backed up before any change; if it
+  was already broken JSON, the original bytes still land in the backup
+  before it gets repaired.
+- Your own state, `~/.claude/statusline.config.json` and the cost files
+  (`.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`), is
+  never touched by the sync step. Only the toggle script writes the
+  config; only the cost refresher writes the cost files.
+- Two lock files keep concurrent runs from stepping on each other:
+  `.statusline-sync.lock` for the sync hook, `.cost_cache.lock` for the
+  cost refresher. Neither holds user data. Locking uses `flock` when it's
+  available and just skips it otherwise, so a system without `flock`
+  still works, just without the race protection.
 
 ## Uninstall
 
-1. Remove the plugin: run `/plugin`, then remove the `nutshell-statusline` plugin
-   (and, if you want, the `statusline-in-nutshell` marketplace) from the
-   interactive menu.
-2. Back up your settings, then delete the three installed scripts and the
+1. Run `/plugin`, remove the `nutshell-statusline` plugin (and the
+   marketplace too, if you want) from the menu.
+2. Back up your settings, then remove the installed scripts and the
    `statusLine` key:
 
 ```bash
@@ -164,10 +130,8 @@ rm ~/.claude/statusline.sh ~/.claude/statusline-toggle.sh ~/.claude/cost_cache_r
 jq 'del(.statusLine)' ~/.claude/settings.json > ~/.claude/settings.json.new && mv ~/.claude/settings.json.new ~/.claude/settings.json
 ```
 
-This leaves `statusline.config.json`, `.cost_cache.json`,
-`.cost_ledger.json`, `.cost_baseline.json`, `.cost_cache.lock`, and
-`.statusline-sync.lock` in place. Delete them by hand if you also want to
-clear your saved toggle state, cost history, and lock files.
+This leaves `statusline.config.json` and the cost/lock files in place.
+Delete those by hand too if you want a clean slate.
 
 ## License
 
