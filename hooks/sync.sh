@@ -41,9 +41,16 @@ for f in statusline.sh statusline-toggle.sh cost_cache_refresh.sh; do
 done
 
 # Register the statusLine command (silent; backup first). Requires jq.
+# refreshInterval is required, not cosmetic: Claude Code only re-runs the
+# statusLine command on session start, a new assistant message, /compact,
+# a permission-mode change, or a vim-mode toggle. Switching the advisor
+# model is NOT a trigger, and neither is the cost cache going stale, so
+# every segment we read from disk rather than from the stdin payload
+# (advisor, cost, rate) would show a stale value indefinitely while the
+# session sits idle. A 1s timer re-runs the command on a clock instead.
 if command -v jq >/dev/null 2>&1; then
   SETTINGS="$DEST/settings.json"
-  WANT='{"type":"command","command":"bash ~/.claude/statusline.sh"}'
+  WANT='{"type":"command","command":"bash ~/.claude/statusline.sh","refreshInterval":1}'
   backed_up=0
   if [ -f "$SETTINGS" ]; then
     if ! jq -e 'type == "object"' "$SETTINGS" >/dev/null 2>&1; then

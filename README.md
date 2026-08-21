@@ -107,9 +107,18 @@ Or just say it: "hide the cost line", "show everything", "turn on emoji",
   there and differs from the bundled version, it's backed up to
   `<name>.bak` first.
 - The status line gets registered under `~/.claude/settings.json`'s
-  `statusLine` key. `settings.json` is backed up before any change; if it
-  was already broken JSON, the original bytes still land in the backup
-  before it gets repaired.
+  `statusLine` key, with `refreshInterval: 1`. `settings.json` is backed up
+  before any change; if it was already broken JSON, the original bytes still
+  land in the backup before it gets repaired.
+- That 1-second interval is deliberate. Claude Code re-runs a status line on
+  assistant messages and a few UI events, but not when you switch advisor
+  model or when the cost cache goes stale, so the advisor, cost, and rate
+  segments would sit on old values while the session is idle. The timer
+  re-runs the script on a clock instead, at the cost of one `bash` + `jq`
+  pass per second. Note that deleting `refreshInterval` by hand doesn't
+  stick on the plugin path: the sync hook restores the whole `statusLine`
+  block at the next session start. To opt out for good, remove the plugin
+  and install via `npx` instead, or edit the value in `hooks/sync.sh`.
 - Your own state, `~/.claude/statusline.config.json` and the cost files
   (`.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`), is
   never touched by the sync step. Only the toggle script writes the

@@ -100,7 +100,13 @@ case "$cache_updated_at" in
 esac
 
 cache_age=$(( $(date +%s) - cache_updated_at ))
-if [ "$show_cost" = true ] && [ "$cache_age" -ge "$COST_CACHE_MAX_AGE" ]; then
+# The ccusage check mirrors cost_cache_refresh.sh's own guard. Without it the
+# refresher exits immediately, the cache never becomes fresh, and cache_age
+# stays above the threshold forever, so every single render spawns a process
+# that can only exit. Harmless at one spawn per assistant message, but
+# settings.json now sets refreshInterval, putting renders on a 1s clock.
+if [ "$show_cost" = true ] && [ "$cache_age" -ge "$COST_CACHE_MAX_AGE" ] \
+   && command -v ccusage >/dev/null 2>&1; then
   ( nohup bash "$HOME/.claude/cost_cache_refresh.sh" >/dev/null 2>&1 & disown ) 2>/dev/null
 fi
 
