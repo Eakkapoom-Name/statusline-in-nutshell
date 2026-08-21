@@ -249,43 +249,50 @@ if [ -n "$advisor" ]; then
   line1+=("$(printf '%s %b%s%b' "$(label advisor)" "$ORANGE" "$advisor" "$RESET")")
 fi
 
-if [ -n "$ctx_used" ]; then
-  bar=$(render_bar "$ctx_used")
-  if [ -n "$ctx_used_tokens" ] && [ -n "$ctx_total_tokens" ]; then
-    used_fmt=$(fmt_tokens "$ctx_used_tokens")
-    total_fmt=$(fmt_tokens "$ctx_total_tokens")
-    line1+=("$(printf '%s %b%s%b/%b%s%b tokens %s %b%.0f%%%b used' "$(label context)" "$ORANGE" "$used_fmt" "$RESET" "$ORANGE" "$total_fmt" "$RESET" "$bar" "$ORANGE" "$ctx_used" "$RESET")")
-  else
-    line1+=("$(printf '%s %s %b%.0f%%%b used' "$(label context)" "$bar" "$ORANGE" "$ctx_used" "$RESET")")
-  fi
+# A fresh session, and the window right after /compact, has no
+# used_percentage and no total_input_tokens yet (both are documented as
+# null / 0 before the first API response). context_window_size is not in
+# that group: it comes from the selected model, so it is there from the
+# first render. Treat the missing pair as a real zero and show 0% rather
+# than a "warming up" placeholder, which said less than the number does.
+[ -z "$ctx_used" ] && ctx_used=0
+[ -z "$ctx_used_tokens" ] && ctx_used_tokens=0
+
+bar=$(render_bar "$ctx_used")
+if [ -n "$ctx_total_tokens" ]; then
+  used_fmt=$(fmt_tokens "$ctx_used_tokens")
+  total_fmt=$(fmt_tokens "$ctx_total_tokens")
+  line1+=("$(printf '%s %b%s%b/%b%s%b tokens %s %b%.0f%%%b used' "$(label context)" "$ORANGE" "$used_fmt" "$RESET" "$ORANGE" "$total_fmt" "$RESET" "$bar" "$ORANGE" "$ctx_used" "$RESET")")
 else
-  line1+=("$(label context) warming up")
+  line1+=("$(printf '%s %s %b%.0f%%%b used' "$(label context)" "$bar" "$ORANGE" "$ctx_used" "$RESET")")
 fi
 
-# "warming up" only if the rate_limits object exists but its percentage
-# hasn't landed yet. If the object is absent (e.g. metered API-key billing
-# has no rate limits at all), skip it so the row stays hidden instead of
-# showing "warming up" forever.
-if [ -n "$five_pct" ]; then
-  reset_str=$(fmt_reset "$five_reset")
-  if [ -n "$reset_str" ]; then
-    line3+=("$(printf '%s %b%.0f%%%b used (resets %b%s%b)' "$(label rate_five)" "$ORANGE" "$five_pct" "$RESET" "$ORANGE" "$reset_str" "$RESET")")
-  else
-    line3+=("$(printf '%s %b%.0f%%%b used' "$(label rate_five)" "$ORANGE" "$five_pct" "$RESET")")
-  fi
-elif [ "$five_hour_present" = "true" ]; then
-  line3+=("$(label rate_five) warming up")
+# Both rate segments always render. A missing percentage means the numbers
+# have not landed yet (fresh session, before the first response), so it
+# reads as 0% instead of hiding the whole row. The reset time is still
+# optional: fmt_reset returns empty for an absent or unparseable
+# resets_at, and that branch drops the "(resets ...)" part.
+#
+# five_hour_present / week_present are still parsed but no longer used
+# here. They are the only way to tell "not measured yet" from "this
+# account has no rate limits at all" (metered API-key billing), which
+# needs its own rendering rather than a 0% that isn't true. Keep them for
+# that, do not delete them as dead code.
+[ -z "$five_pct" ] && five_pct=0
+[ -z "$week_pct" ] && week_pct=0
+
+reset_str=$(fmt_reset "$five_reset")
+if [ -n "$reset_str" ]; then
+  line3+=("$(printf '%s %b%.0f%%%b used (resets %b%s%b)' "$(label rate_five)" "$ORANGE" "$five_pct" "$RESET" "$ORANGE" "$reset_str" "$RESET")")
+else
+  line3+=("$(printf '%s %b%.0f%%%b used' "$(label rate_five)" "$ORANGE" "$five_pct" "$RESET")")
 fi
 
-if [ -n "$week_pct" ]; then
-  reset_str=$(fmt_reset "$week_reset")
-  if [ -n "$reset_str" ]; then
-    line3+=("$(printf '%s %b%.0f%%%b used (resets %b%s%b)' "$(label rate_week)" "$ORANGE" "$week_pct" "$RESET" "$ORANGE" "$reset_str" "$RESET")")
-  else
-    line3+=("$(printf '%s %b%.0f%%%b used' "$(label rate_week)" "$ORANGE" "$week_pct" "$RESET")")
-  fi
-elif [ "$week_present" = "true" ]; then
-  line3+=("$(label rate_week) warming up")
+reset_str=$(fmt_reset "$week_reset")
+if [ -n "$reset_str" ]; then
+  line3+=("$(printf '%s %b%.0f%%%b used (resets %b%s%b)' "$(label rate_week)" "$ORANGE" "$week_pct" "$RESET" "$ORANGE" "$reset_str" "$RESET")")
+else
+  line3+=("$(printf '%s %b%.0f%%%b used' "$(label rate_week)" "$ORANGE" "$week_pct" "$RESET")")
 fi
 
 # Render one "label X.XX$" cost item, value+$ colored. label_text is already
