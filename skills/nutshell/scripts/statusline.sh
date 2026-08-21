@@ -135,6 +135,15 @@ effort_color() {
 
 # Field label — word ("model:") or icon ("🧠") depending on emoji_mode,
 # toggled via `/statusline emoji` (~/.claude/statusline.config.json → "emoji").
+#
+# Every icon here must be a SINGLE codepoint whose East Asian Width is W
+# (wide). Do not use an emoji that needs a U+FE0F variation selector to
+# reach its emoji form: the terminal measures the base codepoint, finds it
+# Neutral width, reserves one cell, and the font then paints two, so the
+# glyph overlaps whatever follows it. U+1F5D3 FE0F and U+267B FE0F both
+# did this and were replaced. Verify a new icon before adding it with
+# `python3 -c "import unicodedata as u; print(u.east_asian_width(C))"`,
+# which must print W, and confirm the character is one codepoint.
 label() {
   if [ "$emoji_mode" = true ]; then
     case "$1" in
@@ -144,10 +153,10 @@ label() {
       cost_session) printf '🪙' ;;
       cost_today)   printf '⛅' ;;
       cost_week)    printf '📅' ;;
-      cost_month)   printf '🗓️' ;;
+      cost_month)   printf '🧾' ;;
       cost_alltime) printf '💳' ;;
       rate_five)    printf '🕐' ;;
-      rate_week)    printf '♻️' ;;
+      rate_week)    printf '🔄' ;;
     esac
   else
     case "$1" in

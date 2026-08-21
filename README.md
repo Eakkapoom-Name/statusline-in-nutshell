@@ -14,8 +14,8 @@ Emoji mode swaps the text labels for icons:
 
 ```
 💡 Sonnet 5 (medium) | 🎓 Fable 5 | ⏳ 412.0k/1.0m tokens [████░░░░░░] 41% used
-🪙 1.24$ | ⛅ 3.87$ | 📅 12.50$ | 🗓️ 41.02$ | 💳 210.33$
-🕐 42% used (resets 6:19am) | ♻️ 18% used (resets Jul 27, 6:00pm)
+🪙 1.24$ | ⛅ 3.87$ | 📅 12.50$ | 🧾 41.02$ | 💳 210.33$
+🕐 42% used (resets 6:19am) | 🔄 18% used (resets Jul 27, 6:00pm)
 ```
 
 ## Platform support
