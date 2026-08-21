@@ -66,6 +66,8 @@ Talk to the skill in plain language after the slash command:
 /nutshell-statusline:nutshell hide cost
 /nutshell-statusline:nutshell hide rate
 /nutshell-statusline:nutshell hide workspace
+/nutshell-statusline:nutshell off
+/nutshell-statusline:nutshell on
 /nutshell-statusline:nutshell cost
 /nutshell-statusline:nutshell emoji
 /nutshell-statusline:nutshell emoji on
@@ -85,7 +87,10 @@ Or just say it: "hide the cost line", "show everything", "turn on emoji",
   it's currently in.
 - `emoji` (or `emoji on` / `emoji off`) swaps text labels for icons. It's
   independent of which lines are shown, and defaults to off.
-- `status` prints the current on/off state for model, cost, rate, emoji.
+- `off` hands the row back to Claude Code and `on` takes it back. See
+  "Turning it off" below; this is not the same as `hide`.
+- `status` prints the current on/off state for the status line itself and
+  for model, cost, rate, workspace, emoji.
 - `reset-all-time-cost` wipes the all-time cost counter for good (today,
   week, month are untouched). Needs `ccusage`, asks for confirmation
   first since there's no undo.
@@ -161,6 +166,23 @@ jq 'del(.statusLine)' ~/.claude/settings.json > ~/.claude/settings.json.new && m
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Turning it off
+
+`/nutshell off` removes the `statusLine` registration from `settings.json`,
+which is what makes Claude Code show its own footer again, including the
+keyboard hints it hides while a custom status line is configured. `/nutshell on`
+puts it back with your part settings intact. `settings.json` is backed up
+before either change, and everything else in it is left alone.
+
+This is different from `hide`. `/nutshell hide` (or `all off`) keeps the
+registration and prints a blank row, so you get an empty bar rather than the
+default one. Only `off` gives you Claude Code's own.
+
+The choice is recorded as `"disabled": true` in `statusline.config.json`, and
+the `SessionStart` sync hook checks it before registering. Without that, the
+hook would put the status line back at the start of the next session and the
+opt-out would last exactly one session.
 
 ## The workspace line
 

@@ -24,12 +24,21 @@ set -euo pipefail
 CONFIG="$HOME/.claude/statusline.config.json"
 REFRESH="$HOME/.claude/cost_cache_refresh.sh"
 PARTS=(model cost rate workspace)
+SETTINGS_FILE="$HOME/.claude/settings.json"
+# Must stay byte-identical in meaning to hooks/sync.sh's WANT and to
+# SKILL.md step 0. Three copies exist because the plugin path, the npx
+# path, and this script can each be the one that registers the status
+# line; if they disagree they rewrite each other on every session start.
+STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/statusline.sh","refreshInterval":1}'
+
 
 usage() {
   cat <<'EOF'
 Usage:
   statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | rate | workspace
   statusline-toggle.sh all <on|off>
+  statusline-toggle.sh off                      # hand the row back to Claude Code's own footer
+  statusline-toggle.sh on                       # take it back, with your saved part settings
   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle; default off
   statusline-toggle.sh status
   statusline-toggle.sh reset-all-time --yes     # reset all-time cost to 0 (keeps today/week/month)
@@ -39,14 +48,58 @@ Parts:
   model  model name / advisor / context bar               (line 1)
   cost   session / today / week / month / all-time spend   (line 2)
   rate   usage rate: current session + current week limits (line 3)
+  workspace current directory / repo / git branch          (line 4)
   emoji  replace text labels with icons across all shown parts (default off)
+
+on / off vs show / hide:
+  `off` removes the statusLine registration from settings.json, so Claude
+  Code shows its own footer again. `all off` keeps the registration and
+  prints a blank row instead. Use `off` to get the default back.
 EOF
+}
+
+# True when the user has handed the status line row back to Claude Code.
+# Absent or unreadable means not disabled, so nothing changes for configs
+# written before this existed.
+is_disabled() {
+  [ "$(jq -r '.disabled' "$CONFIG" 2>/dev/null)" = "true" ]
+}
+
+# Add or remove settings.json's statusLine key. Removing it is what makes
+# Claude Code fall back to its own footer: it suppresses the built-in
+# keyboard hints only while a custom status line is configured, so hiding
+# every part is not the same thing (that leaves the key set and prints a
+# blank row). settings.json is backed up first, and the rewrite is a
+# same-directory mktemp + mv so a reader never catches a half-written file.
+set_statusline_key() {
+  local mode="$1" tmp filter
+  [ -f "$SETTINGS_FILE" ] || { [ "$mode" = "off" ] && return 0; printf '{}\n' > "$SETTINGS_FILE"; }
+  jq -e 'type == "object"' "$SETTINGS_FILE" >/dev/null 2>&1 || {
+    echo "statusline-toggle: $SETTINGS_FILE is not valid JSON, leaving it alone" >&2
+    return 1
+  }
+  cp "$SETTINGS_FILE" "${SETTINGS_FILE}.bak" 2>/dev/null
+  tmp="$(mktemp "${SETTINGS_FILE}.XXXXXX")" || return 1
+  if [ "$mode" = "off" ]; then
+    filter='del(.statusLine)'
+    jq "$filter" "$SETTINGS_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$SETTINGS_FILE" || { rm -f "$tmp"; return 1; }
+  else
+    jq --argjson v "$STATUSLINE_VALUE" '.statusLine = $v' "$SETTINGS_FILE" > "$tmp" 2>/dev/null \
+      && mv "$tmp" "$SETTINGS_FILE" || { rm -f "$tmp"; return 1; }
+  fi
+}
+
+# Write any top-level boolean key in the config (same atomic pattern as set_part).
+set_flag() {
+  local key="$1" val="$2" tmp
+  tmp="$(mktemp "${CONFIG}.XXXXXX")" || return 1
+  jq --argjson v "$val" ".${key} = \$v" "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
 }
 
 # Ensure the config exists and is valid JSON; recreate with defaults otherwise.
 ensure_config() {
   if [ ! -f "$CONFIG" ] || ! jq -e . "$CONFIG" >/dev/null 2>&1; then
-    printf '{\n  "model": true,\n  "cost": true,\n  "rate": true,\n  "workspace": true,\n  "emoji": false\n}\n' > "$CONFIG"
+    printf '{\n  "model": true,\n  "cost": true,\n  "rate": true,\n  "workspace": true,\n  "emoji": false,\n  "disabled": false\n}\n' > "$CONFIG"
   fi
   # Backfill "emoji" for configs written before emoji mode existed.
   if ! jq -e 'has("emoji")' "$CONFIG" >/dev/null 2>&1; then
@@ -60,6 +113,14 @@ ensure_config() {
     local tmp2
     tmp2="$(mktemp "${CONFIG}.XXXXXX")"
     jq '. + {workspace: true}' "$CONFIG" > "$tmp2" && mv "$tmp2" "$CONFIG"
+  fi
+  # And for "disabled", which records that the user handed the status line
+  # row back to Claude Code. Absent means not disabled, so an old config
+  # keeps working exactly as before.
+  if ! jq -e 'has("disabled")' "$CONFIG" >/dev/null 2>&1; then
+    local tmp3
+    tmp3="$(mktemp "${CONFIG}.XXXXXX")"
+    jq '. + {disabled: false}' "$CONFIG" > "$tmp3" && mv "$tmp3" "$CONFIG"
   fi
 }
 
@@ -91,9 +152,10 @@ get_emoji() {
 
 # Full box-drawn table — only for the explicit "status" command.
 print_status() {
-  local p state names=(Part model cost rate workspace emoji) states=(Status) name_w=0 state_w=0
+  local p state names=(Part status-line model cost rate workspace emoji) states=(Status) name_w=0 state_w=0
   local top sep bot i
 
+  if is_disabled; then states+=("off"); else states+=("on"); fi
   for p in "${PARTS[@]}"; do
     if [ "$(get_part "$p")" = "false" ]; then states+=("off"); else states+=("on"); fi
   done
@@ -137,6 +199,35 @@ case "$cmd" in
   -h|--help|help)
     usage
     ;;
+  off)
+    if is_disabled; then
+      echo "status line: already off (Claude Code's own footer is showing)"
+      exit 0
+    fi
+    if set_statusline_key off; then
+      set_flag disabled true
+      echo "status line: off — Claude Code's default footer is back. Your part"
+      echo "settings are kept; run 'statusline-toggle.sh on' to restore this one."
+      echo "settings.json backed up to settings.json.bak."
+    else
+      echo "statusline-toggle: could not update settings.json, status line left on" >&2
+      exit 1
+    fi
+    ;;
+  on)
+    if ! is_disabled && jq -e '.statusLine' "$SETTINGS_FILE" >/dev/null 2>&1; then
+      echo "status line: already on"
+      exit 0
+    fi
+    if set_statusline_key on; then
+      set_flag disabled false
+      echo "status line: on — restored with your saved part settings."
+      echo "settings.json backed up to settings.json.bak."
+    else
+      echo "statusline-toggle: could not update settings.json, status line left off" >&2
+      exit 1
+    fi
+    ;;
   all)
     action="${2:-}"
     case "$action" in
@@ -145,6 +236,7 @@ case "$cmd" in
       *) echo "statusline-toggle: 'all' needs on|off" >&2; usage; exit 1 ;;
     esac
     for p in "${PARTS[@]}"; do set_part "$p" "$val"; print_one "$p" "$action"; done
+    is_disabled && echo "note: the status line is off, so this takes effect after 'statusline-toggle.sh on'."
     ;;
   model|cost|rate|workspace)
     action="${2:-}"
@@ -157,6 +249,7 @@ case "$cmd" in
       *) echo "statusline-toggle: '$cmd' needs on|off|toggle" >&2; usage; exit 1 ;;
     esac
     print_one "$cmd" "$action"
+    is_disabled && echo "note: the status line is off, so this takes effect after 'statusline-toggle.sh on'."
     ;;
   emoji)
     action="${2:-toggle}"
@@ -251,7 +344,7 @@ case "$cmd" in
     exit 1
     ;;
   *)
-    echo "statusline-toggle: unknown part '$cmd' (expected model|cost|rate|workspace|all|emoji|status|reset-all-time|uninstall)" >&2
+    echo "statusline-toggle: unknown part '$cmd' (expected model|cost|rate|workspace|all|on|off|emoji|status|reset-all-time|uninstall)" >&2
     usage
     exit 1
     ;;

@@ -48,7 +48,14 @@ done
 # every segment we read from disk rather than from the stdin payload
 # (advisor, cost, rate) would show a stale value indefinitely while the
 # session sits idle. A 1s timer re-runs the command on a clock instead.
-if command -v jq >/dev/null 2>&1; then
+#
+# Unless the user turned the status line off with `statusline-toggle.sh off`,
+# which records "disabled": true in statusline.config.json and deletes the
+# key. Without this check the hook would re-register on the next session
+# start and the opt-out would last exactly one session. An absent or
+# unreadable config reads as not disabled, so the default is unchanged.
+if command -v jq >/dev/null 2>&1 \
+   && [ "$(jq -r '.disabled' "$DEST/statusline.config.json" 2>/dev/null)" != "true" ]; then
   SETTINGS="$DEST/settings.json"
   WANT='{"type":"command","command":"bash ~/.claude/statusline.sh","refreshInterval":1}'
   backed_up=0

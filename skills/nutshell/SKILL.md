@@ -28,26 +28,35 @@ argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-co
    `~/.claude/settings.json` lacks
    `"statusLine": {"type": "command", "command": "bash ~/.claude/statusline.sh", "refreshInterval": 1}`
    (key absent, or present but different), back up settings.json and
-   add/update it via `jq`. All three keys are required: without
+   add/update it via `jq`, UNLESS `statusline.config.json` has
+   `"disabled": true` (the user handed the row back to Claude Code with
+   `off`), in which case leave settings.json alone. All three keys are
+   required: without
    `refreshInterval` the status line only re-runs on assistant messages
    and a few UI events, so disk-sourced segments (advisor, cost, rate)
    stay stale while the session is idle. Never touch `statusline.config.json`,
    `.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`.
-1. Parse the request into a part (`model`/`cost`/`rate`/`workspace`/`emoji`/`all`) and
-   action:
+1. "turn the status line off", "give me the default status line back",
+   "disable it" -> `bash ~/.claude/statusline-toggle.sh off`. "turn it back
+   on", "restore it" -> `... on`. These are NOT the same as `hide`/`show`:
+   `off` removes the settings.json registration so Claude Code shows its own
+   footer, while `all off` keeps ours registered and prints a blank row.
+2. Otherwise parse the request into a part
+   (`model`/`cost`/`rate`/`workspace`/`emoji`/`all`) and action:
    - "show X" / "hide X" -> on / off.
    - bare `show` -> all parts on. Bare `hide` -> all parts off.
    - bare part name alone -> toggle.
-2. Run (never hand-edit the config):
+3. Run (never hand-edit the config):
    - `bash ~/.claude/statusline-toggle.sh <part> off|on|toggle`
    - `bash ~/.claude/statusline-toggle.sh all off|on`
    - `bash ~/.claude/statusline-toggle.sh emoji [off|on]`
+   - `bash ~/.claude/statusline-toggle.sh on|off`
    - `bash ~/.claude/statusline-toggle.sh status`
-3. Report the script's output verbatim (`part: state` line(s), or the
+4. Report the script's output verbatim (`part: state` line(s), or the
    `status` table preformatted). No prose, no unchanged-part mentions.
-4. Before a toggle that leaves every part off, ask: "Hiding all parts will
+5. Before a toggle that leaves every part off, ask: "Hiding all parts will
    leave the status line blank. Do you want to proceed?" Wait for yes/no.
-5. Reply to any yes/no confirmation with exactly "Abort." or "Done." —
+6. Reply to any yes/no confirmation with exactly "Abort." or "Done." —
    nothing else. Never restate the question, never add prose, even for a
    stray yes/no with no pending action.
 
