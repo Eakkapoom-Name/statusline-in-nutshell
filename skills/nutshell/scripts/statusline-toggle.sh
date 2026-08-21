@@ -12,7 +12,7 @@
 # silently switch the status line to icons the user didn't ask for.
 #
 # Usage:
-#   statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | rate
+#   statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | rate | workspace
 #   statusline-toggle.sh all <on|off>
 #   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle
 #   statusline-toggle.sh status
@@ -23,12 +23,12 @@ set -euo pipefail
 
 CONFIG="$HOME/.claude/statusline.config.json"
 REFRESH="$HOME/.claude/cost_cache_refresh.sh"
-PARTS=(model cost rate)
+PARTS=(model cost rate workspace)
 
 usage() {
   cat <<'EOF'
 Usage:
-  statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | rate
+  statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | rate | workspace
   statusline-toggle.sh all <on|off>
   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle; default off
   statusline-toggle.sh status
@@ -46,13 +46,20 @@ EOF
 # Ensure the config exists and is valid JSON; recreate with defaults otherwise.
 ensure_config() {
   if [ ! -f "$CONFIG" ] || ! jq -e . "$CONFIG" >/dev/null 2>&1; then
-    printf '{\n  "model": true,\n  "cost": true,\n  "rate": true,\n  "emoji": false\n}\n' > "$CONFIG"
+    printf '{\n  "model": true,\n  "cost": true,\n  "rate": true,\n  "workspace": true,\n  "emoji": false\n}\n' > "$CONFIG"
   fi
   # Backfill "emoji" for configs written before emoji mode existed.
   if ! jq -e 'has("emoji")' "$CONFIG" >/dev/null 2>&1; then
     local tmp
     tmp="$(mktemp "${CONFIG}.XXXXXX")"
     jq '. + {emoji: false}' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+  fi
+  # Same backfill for "workspace", added after the location row. Defaults to
+  # true, matching statusline.sh's fail-open reading of a missing key.
+  if ! jq -e 'has("workspace")' "$CONFIG" >/dev/null 2>&1; then
+    local tmp2
+    tmp2="$(mktemp "${CONFIG}.XXXXXX")"
+    jq '. + {workspace: true}' "$CONFIG" > "$tmp2" && mv "$tmp2" "$CONFIG"
   fi
 }
 
@@ -84,7 +91,7 @@ get_emoji() {
 
 # Full box-drawn table — only for the explicit "status" command.
 print_status() {
-  local p state names=(Part model cost rate emoji) states=(Status) name_w=0 state_w=0
+  local p state names=(Part model cost rate workspace emoji) states=(Status) name_w=0 state_w=0
   local top sep bot i
 
   for p in "${PARTS[@]}"; do
@@ -139,7 +146,7 @@ case "$cmd" in
     esac
     for p in "${PARTS[@]}"; do set_part "$p" "$val"; print_one "$p" "$action"; done
     ;;
-  model|cost|rate)
+  model|cost|rate|workspace)
     action="${2:-}"
     case "$action" in
       on)  set_part "$cmd" true ;;
@@ -244,7 +251,7 @@ case "$cmd" in
     exit 1
     ;;
   *)
-    echo "statusline-toggle: unknown part '$cmd' (expected model|cost|rate|all|emoji|status|reset-all-time|uninstall)" >&2
+    echo "statusline-toggle: unknown part '$cmd' (expected model|cost|rate|workspace|all|emoji|status|reset-all-time|uninstall)" >&2
     usage
     exit 1
     ;;

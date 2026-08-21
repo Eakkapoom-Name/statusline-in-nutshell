@@ -1,13 +1,15 @@
 # statusline-in-nutshell
 
-A three-line status line for Claude Code: model/effort/context on line 1,
-cost windows on line 2, rate-limit usage on line 3. Toggle each line on or
-off with a slash command, no manual JSON editing.
+A four-line status line for Claude Code: model/effort/context on line 1,
+cost windows on line 2, rate-limit usage on line 3, and where you are
+(directory, repo, branch) on line 4. Toggle each line on or off with a
+slash command, no manual JSON editing.
 
 ```
 model: Sonnet 5 (medium) | advisor: Fable 5 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
 session: 1.24$ | today: 3.87$ | week: 12.50$ | month: 41.02$ | all-time: 210.33$
 5 hours session: 42% used (resets 6:19am) | weekly session: 18% used (resets Jul 27, 6:00pm)
+workspace: ~/Documents/statusline-in-nutshell | repo: Eakkapoom-Name/statusline-in-nutshell | branch: master
 ```
 
 Emoji mode swaps the text labels for icons:
@@ -16,6 +18,7 @@ Emoji mode swaps the text labels for icons:
 💡 Sonnet 5 (medium) | 🎓 Fable 5 | ⏳ 412.0k/1.0m tokens [████░░░░░░] 41% used
 🪙 1.24$ | ⛅ 3.87$ | 📅 12.50$ | 🧾 41.02$ | 💳 210.33$
 🕐 42% used (resets 6:19am) | 🔄 18% used (resets Jul 27, 6:00pm)
+📂 ~/Documents/statusline-in-nutshell | 🌐 Eakkapoom-Name/statusline-in-nutshell | 🌿 master
 ```
 
 ## Platform support
@@ -62,6 +65,7 @@ Talk to the skill in plain language after the slash command:
 /nutshell-statusline:nutshell show model
 /nutshell-statusline:nutshell hide cost
 /nutshell-statusline:nutshell hide rate
+/nutshell-statusline:nutshell hide workspace
 /nutshell-statusline:nutshell cost
 /nutshell-statusline:nutshell emoji
 /nutshell-statusline:nutshell emoji on
@@ -74,7 +78,7 @@ Talk to the skill in plain language after the slash command:
 Or just say it: "hide the cost line", "show everything", "turn on emoji",
 "what's showing?".
 
-- `show` / `hide` turns all three lines on or off. Hiding everything
+- `show` / `hide` turns all four lines on or off. Hiding everything
   leaves the status line blank, so the skill asks you to confirm first.
 - `hide cost` / `show model` / etc. toggles one line without touching the
   others. Name a line with no on/off word and it flips whatever state
@@ -157,3 +161,24 @@ jq 'del(.statusLine)' ~/.claude/settings.json > ~/.claude/settings.json.new && m
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## The workspace line
+
+Line 4 shows where the session is: the current directory (with `$HOME`
+shortened to `~`), the repository, and the git branch.
+
+The directory and repository come straight from the status line payload,
+where `workspace.repo` is parsed from the `origin` remote. The branch does
+not: the payload has no general branch field (`worktree.branch` exists only
+for `--worktree` sessions), so the branch is read directly out of `.git/HEAD`
+rather than by shelling out to `git`. That avoids forking a process once a
+second and works on a machine with no git installed. A linked worktree, where
+`.git` is a file pointing at the real git directory, is followed correctly,
+and a detached HEAD shows a short commit SHA instead of a branch name.
+
+Each of the three segments is independent. A directory outside any git repo
+shows just the path; a repo with no `origin` remote shows the path and the
+branch but no repository name. If none of the three resolve, the line is
+omitted rather than printed empty.
+
+Hide it with `/nutshell hide workspace`.

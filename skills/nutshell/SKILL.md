@@ -15,6 +15,7 @@ argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-co
 | model | `model` | model name, advisor, context bar |
 | cost | `cost` | session/today/week/month/all-time spend |
 | rate | `rate` | session + week rate limits |
+| workspace | `workspace` | current directory, repo, git branch |
 
 ## What to do
 
@@ -32,10 +33,10 @@ argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-co
    and a few UI events, so disk-sourced segments (advisor, cost, rate)
    stay stale while the session is idle. Never touch `statusline.config.json`,
    `.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`.
-1. Parse the request into a part (`model`/`cost`/`rate`/`emoji`/`all`) and
+1. Parse the request into a part (`model`/`cost`/`rate`/`workspace`/`emoji`/`all`) and
    action:
    - "show X" / "hide X" -> on / off.
-   - bare `show` -> all three on. Bare `hide` -> all three off.
+   - bare `show` -> all parts on. Bare `hide` -> all parts off.
    - bare part name alone -> toggle.
 2. Run (never hand-edit the config):
    - `bash ~/.claude/statusline-toggle.sh <part> off|on|toggle`
@@ -44,7 +45,7 @@ argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-co
    - `bash ~/.claude/statusline-toggle.sh status`
 3. Report the script's output verbatim (`part: state` line(s), or the
    `status` table preformatted). No prose, no unchanged-part mentions.
-4. Before a toggle that leaves all three off, ask: "Hiding all parts will
+4. Before a toggle that leaves every part off, ask: "Hiding all parts will
    leave the status line blank. Do you want to proceed?" Wait for yes/no.
 5. Reply to any yes/no confirmation with exactly "Abort." or "Done." —
    nothing else. Never restate the question, never add prose, even for a

@@ -11,7 +11,7 @@ input=$(cat)
 # delimiters even when IFS is set to just one of them, silently shifting
 # fields whenever one is empty (routine: absent .effort, absent .cost).
 # \x1f isn't IFS whitespace, so it doesn't collapse.
-IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost five_pct five_reset week_pct week_reset five_hour_present week_present < <(
+IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost five_pct five_reset week_pct week_reset five_hour_present week_present ws_dir repo_owner repo_name < <(
   jq -r '[
       (.model.display_name // ""),
       (.effort.level // ""),
@@ -24,7 +24,10 @@ IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost 
       (.rate_limits.seven_day.used_percentage // ""),
       (.rate_limits.seven_day.resets_at // ""),
       (.rate_limits.five_hour != null),
-      (.rate_limits.seven_day != null)
+      (.rate_limits.seven_day != null),
+      (.workspace.current_dir // .cwd // ""),
+      (.workspace.repo.owner // ""),
+      (.workspace.repo.name // "")
     ] | map(tostring) | join("\u001f")' <<< "$input" 2>/dev/null
 )
 advisor_raw=$(jq -r '.advisorModel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
@@ -53,6 +56,7 @@ STATUSLINE_CONFIG_FILE="$HOME/.claude/statusline.config.json"
 show_model=true
 show_cost=true
 show_rate=true
+show_workspace=true
 # Emoji mode — replaces text labels ("model:", "session:", ...) with icons.
 # Fail CLOSED (default off): unlike show_*, a missing/bad key must not
 # silently switch the status line to icons the user didn't ask for.
@@ -62,12 +66,13 @@ if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
   # it). Missing key -> "null" text, so show_* stays shown (fail open),
   # emoji stays off (fail closed). Duplicated in statusline-toggle.sh's
   # get_part()/get_emoji(); keep both in sync by hand.
-  IFS=$'\x1f' read -r cfg_model cfg_cost cfg_rate cfg_emoji < <(
-    jq -r '[(.model|tostring), (.cost|tostring), (.rate|tostring), (.emoji|tostring)] | join("\u001f")' "$STATUSLINE_CONFIG_FILE" 2>/dev/null
+  IFS=$'\x1f' read -r cfg_model cfg_cost cfg_rate cfg_workspace cfg_emoji < <(
+    jq -r '[(.model|tostring), (.cost|tostring), (.rate|tostring), (.workspace|tostring), (.emoji|tostring)] | join("\u001f")' "$STATUSLINE_CONFIG_FILE" 2>/dev/null
   )
   [ "$cfg_model" = "false" ] && show_model=false
   [ "$cfg_cost" = "false" ] && show_cost=false
   [ "$cfg_rate" = "false" ] && show_rate=false
+  [ "$cfg_workspace" = "false" ] && show_workspace=false
   [ "$cfg_emoji" = "true" ] && emoji_mode=true
 fi
 
@@ -157,6 +162,9 @@ label() {
       cost_alltime) printf '💳' ;;
       rate_five)    printf '🕐' ;;
       rate_week)    printf '🔄' ;;
+      workspace)    printf '📂' ;;
+      repo)         printf '🌐' ;;
+      branch)       printf '🌿' ;;
     esac
   else
     case "$1" in
@@ -170,8 +178,45 @@ label() {
       cost_alltime) printf 'all-time:' ;;
       rate_five)    printf '5 hours session:' ;;
       rate_week)    printf 'weekly session:' ;;
+      workspace)    printf 'workspace:' ;;
+      repo)         printf 'repo:' ;;
+      branch)       printf 'branch:' ;;
     esac
   fi
+}
+
+# Current branch, read straight out of .git instead of shelling out to git.
+# The payload has no general branch field: worktree.branch exists only for
+# --worktree sessions and is absent for hook-based worktrees, so there is
+# nothing to read for an ordinary checkout. Parsing HEAD avoids forking a
+# process once a second, and works on a machine with no git installed.
+#
+# Walks up from the starting directory the way git itself does, so it still
+# reports the branch when the session's cwd is a subdirectory of the repo.
+git_branch() {
+  local dir="$1" gitdir="" head=""
+  [ -n "$dir" ] || return
+  while [ -n "$dir" ]; do
+    if [ -d "$dir/.git" ]; then
+      gitdir="$dir/.git"
+      break
+    fi
+    # A linked worktree (git worktree add) has .git as a FILE holding
+    # "gitdir: <path>", and that path is where HEAD actually lives.
+    if [ -f "$dir/.git" ]; then
+      gitdir=$(sed -n 's/^gitdir: //p' "$dir/.git" 2>/dev/null | head -1)
+      break
+    fi
+    dir=${dir%/*}
+  done
+  [ -n "$gitdir" ] && [ -r "$gitdir/HEAD" ] || return
+  head=$(head -1 "$gitdir/HEAD" 2>/dev/null)
+  case "$head" in
+    'ref: refs/heads/'*) printf '%s' "${head#ref: refs/heads/}" ;;
+    '') return ;;
+    # Detached HEAD holds a bare SHA. Show it short, the way git log does.
+    *) printf '%s' "$(printf '%s' "$head" | cut -c1-7)" ;;
+  esac
 }
 
 # Format a raw token count: 51800 -> "51.8k", 1000000 -> "1.0m". Values under 1000 print as-is.
@@ -244,6 +289,7 @@ fmt_reset() {
 line1=()
 line2=()
 line3=()
+line4=()
 
 if [ -n "$model" ]; then
   if [ -n "$effort" ]; then
@@ -318,6 +364,32 @@ cost_item() {
 [ -n "$monthly_cost" ] && line2+=("$(cost_item "$(label cost_month)" "$monthly_cost")")
 [ -n "$all_time_cost" ] && line2+=("$(cost_item "$(label cost_alltime)" "$all_time_cost")")
 
+# Location row: where the session is, which repo it belongs to, and the
+# branch. Each segment is independent, so a directory outside any git repo
+# still shows its path, and a repo with no origin remote still shows its
+# branch. repo.* comes from the origin remote and is absent without one.
+if [ -n "$ws_dir" ]; then
+  # $HOME/x -> ~/x via case matching rather than sed, since a home path can
+  # contain characters that are regex metacharacters.
+  case "$ws_dir" in
+    "$HOME")   ws_display="~" ;;
+    "$HOME"/*) ws_display="~${ws_dir#"$HOME"}" ;;
+    *)         ws_display="$ws_dir" ;;
+  esac
+  line4+=("$(printf '%s %b%s%b' "$(label workspace)" "$ORANGE" "$ws_display" "$RESET")")
+fi
+
+repo_display=""
+if [ -n "$repo_owner" ] && [ -n "$repo_name" ]; then
+  repo_display="$repo_owner/$repo_name"
+elif [ -n "$repo_name" ]; then
+  repo_display="$repo_name"
+fi
+[ -n "$repo_display" ] && line4+=("$(printf '%s %b%s%b' "$(label repo)" "$ORANGE" "$repo_display" "$RESET")")
+
+branch=$(git_branch "$ws_dir")
+[ -n "$branch" ] && line4+=("$(printf '%s %b%s%b' "$(label branch)" "$ORANGE" "$branch" "$RESET")")
+
 # Join segments (passed as positional args) with " | ". Avoids a bash
 # nameref (introduced in 4.3), which macOS's bundled bash 3.2 does not
 # support.
@@ -332,10 +404,12 @@ join_segments() {
 [ "$show_model" = true ] && echo "$(join_segments "${line1[@]}")"
 [ "$show_cost" = true ] && echo "$(join_segments "${line2[@]}")"
 [ "$show_rate" = true ] && [ "${#line3[@]}" -gt 0 ] && echo "$(join_segments "${line3[@]}")"
+[ "$show_workspace" = true ] && [ "${#line4[@]}" -gt 0 ] && echo "$(join_segments "${line4[@]}")"
 
-# All three sections hidden -> print one empty line so the status line area
+# Every section hidden -> print one empty line so the status line area
 # stays reserved instead of vanishing entirely (no output at all).
-if [ "$show_model" = false ] && [ "$show_cost" = false ] && [ "$show_rate" = false ]; then
+if [ "$show_model" = false ] && [ "$show_cost" = false ] && [ "$show_rate" = false ] \
+   && [ "$show_workspace" = false ]; then
   echo ""
 fi
 exit 0
