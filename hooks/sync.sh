@@ -82,7 +82,18 @@ if command -v jq >/dev/null 2>&1 \
   fi
   cur=$(jq -c '.statusLine // empty' "$SETTINGS" 2>/dev/null)
   want=$(printf '%s' "$WANT" | jq -c .)
-  if [ "$cur" != "$want" ]; then
+  # Never take over a status line someone else registered. Claude Code's own
+  # /statusline writes one (e.g. generated from your shell PS1), and without
+  # this check the hook would silently replace it on every session start.
+  # An absent key is free to claim; ours is recognised by the command
+  # pointing at the script we install.
+  cur_cmd=$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)
+  foreign=0
+  case "$cur_cmd" in
+    ''|*'/.claude/statusline.sh'*) ;;
+    *) foreign=1 ;;
+  esac
+  if [ "$foreign" -eq 0 ] && [ "$cur" != "$want" ]; then
     [ "$backed_up" -eq 1 ] || cp "$SETTINGS" "$SETTINGS.bak" 2>/dev/null
     # Same-directory temp name (not the default /tmp) so the later mv is an
     # atomic same-filesystem rename instead of a cross-filesystem

@@ -18,15 +18,16 @@
 # ccusage takes several seconds, so this runs in the background and is never awaited
 # by statusline.sh.
 
+# Pinned for the same reason as statusline.sh: date output and decimal
+# formatting must not vary with the machine's locale, since the cache this
+# writes is parsed back as dot-decimal numbers and %Y-%m-%d dates.
+LC_ALL=C
+export LC_ALL
+
 CACHE_FILE="$HOME/.claude/.cost_cache.json"
 LEDGER_FILE="$HOME/.claude/.cost_ledger.json"
 BASELINE_FILE="$HOME/.claude/.cost_baseline.json"
 LOCK_FILE="$HOME/.claude/.cost_cache.lock"
-
-# Run `date` for a unix epoch with the given format, GNU (-d) or BSD (-r) style.
-epoch_date() {
-  date -d "@${1}" "$2" 2>/dev/null || date -r "${1}" "$2" 2>/dev/null
-}
 
 # Subtract N calendar days, GNU (-d) or BSD/macOS (-v). Calendar-day, not
 # epoch-seconds: N*86400 lands on the wrong date across a DST transition.

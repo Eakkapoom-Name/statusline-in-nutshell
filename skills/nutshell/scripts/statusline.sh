@@ -3,6 +3,15 @@
 # Reads the statusLine JSON payload from stdin and prints a single summary line.
 # All optional fields are omitted gracefully (no blank labels) when absent.
 
+# Pin the locale for this script. Two things depend on it and both are
+# wrong in some locales: `date +%p` is empty where the locale defines no
+# am/pm strings, which silently drops it from the reset time, and a locale
+# with a comma decimal separator makes bash's printf '%.2f' reject the
+# dot-decimal numbers jq hands us. C is defined everywhere and formats
+# both the way the rest of this script assumes.
+LC_ALL=C
+export LC_ALL
+
 input=$(cat)
 
 # One jq call instead of one per field. `// ""` not `// empty` (empty is a
@@ -105,6 +114,12 @@ case "$cache_updated_at" in
 esac
 
 cache_age=$(( $(date +%s) - cache_updated_at ))
+# A timestamp in the future (clock skew, a machine that had its time fixed,
+# a hand-edited cache) makes the age negative, which is always below the
+# threshold, so the refresh would never fire and the stale costs would stay
+# on screen until the wall clock caught up. Treat a future timestamp as
+# stale: the refresh rewrites updated_at and the cache self-heals.
+[ "$cache_age" -lt 0 ] && cache_age="$COST_CACHE_MAX_AGE"
 # The ccusage check mirrors cost_cache_refresh.sh's own guard. Without it the
 # refresher exits immediately, the cache never becomes fresh, and cache_age
 # stays above the threshold forever, so every single render spawns a process
@@ -402,7 +417,7 @@ join_segments() {
 }
 
 [ "$show_model" = true ] && echo "$(join_segments "${line1[@]}")"
-[ "$show_cost" = true ] && echo "$(join_segments "${line2[@]}")"
+[ "$show_cost" = true ] && [ "${#line2[@]}" -gt 0 ] && echo "$(join_segments "${line2[@]}")"
 [ "$show_rate" = true ] && [ "${#line3[@]}" -gt 0 ] && echo "$(join_segments "${line3[@]}")"
 [ "$show_workspace" = true ] && [ "${#line4[@]}" -gt 0 ] && echo "$(join_segments "${line4[@]}")"
 

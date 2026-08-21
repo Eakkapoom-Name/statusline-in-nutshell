@@ -38,7 +38,7 @@ Usage:
   statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | rate | workspace
   statusline-toggle.sh all <on|off>
   statusline-toggle.sh off                      # hand the row back to Claude Code's own footer
-  statusline-toggle.sh on                       # take it back, with your saved part settings
+  statusline-toggle.sh on [--force]             # take it back, with your saved part settings
   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle; default off
   statusline-toggle.sh status
   statusline-toggle.sh reset-all-time --yes     # reset all-time cost to 0 (keeps today/week/month)
@@ -63,6 +63,28 @@ EOF
 # written before this existed.
 is_disabled() {
   [ "$(jq -r '.disabled' "$CONFIG" 2>/dev/null)" = "true" ]
+}
+
+# True when settings.json's statusLine is absent, or is one we installed.
+# Anyone can register a status line, and a user may well have a different
+# one (Claude Code's own /statusline writes one from your shell PS1). We
+# must not delete or overwrite someone else's registration, so both `off`
+# and `on` check ownership first and the SessionStart hook does the same.
+# Ownership is decided by the command string pointing at our script.
+statusline_is_ours() {
+  local cmd
+  [ -f "$SETTINGS_FILE" ] || return 0
+  cmd=$(jq -r '.statusLine.command // empty' "$SETTINGS_FILE" 2>/dev/null)
+  [ -z "$cmd" ] && return 0
+  case "$cmd" in
+    *'/.claude/statusline.sh'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The command currently registered, for messages.
+current_statusline_command() {
+  jq -r '.statusLine.command // "(none)"' "$SETTINGS_FILE" 2>/dev/null
 }
 
 # Add or remove settings.json's statusLine key. Removing it is what makes
@@ -200,6 +222,14 @@ case "$cmd" in
     usage
     ;;
   off)
+    if ! statusline_is_ours; then
+      echo "statusline-toggle: settings.json's statusLine points at a different" >&2
+      echo "status line, not ours:" >&2
+      echo "  $(current_statusline_command)" >&2
+      echo "Refusing to remove someone else's registration. Delete it yourself if" >&2
+      echo "that is what you want." >&2
+      exit 1
+    fi
     if is_disabled; then
       echo "status line: already off (Claude Code's own footer is showing)"
       exit 0
@@ -215,7 +245,15 @@ case "$cmd" in
     fi
     ;;
   on)
-    if ! is_disabled && jq -e '.statusLine' "$SETTINGS_FILE" >/dev/null 2>&1; then
+    if ! statusline_is_ours && [ "${2:-}" != "--force" ]; then
+      echo "statusline-toggle: settings.json already registers a different status" >&2
+      echo "line:" >&2
+      echo "  $(current_statusline_command)" >&2
+      echo "Refusing to overwrite it. Re-run as 'on --force' to replace it with" >&2
+      echo "this one." >&2
+      exit 1
+    fi
+    if ! is_disabled && jq -e '.statusLine' "$SETTINGS_FILE" >/dev/null 2>&1 && statusline_is_ours; then
       echo "status line: already on"
       exit 0
     fi
@@ -320,14 +358,26 @@ case "$cmd" in
         fi
       fi
     fi
+    # Clear "disabled" before leaving. A non-purge uninstall keeps the
+    # config, and a config that still says disabled would make a later
+    # reinstall skip registration entirely: the plugin would look installed
+    # and do nothing, with nothing on screen to explain why.
+    if [ "$purge" != true ] && [ -f "$CONFIG" ] && jq -e . "$CONFIG" >/dev/null 2>&1; then
+      tmp="$(mktemp "${CONFIG}.XXXXXX")" \
+        && jq '.disabled = false' "$CONFIG" > "$tmp" \
+        && mv "$tmp" "$CONFIG" || rm -f "$tmp"
+    fi
+    # The sync lock holds no user data, so it goes in both paths. Leaving it
+    # behind on a non-purge uninstall left a file the "kept files" message
+    # never mentioned.
+    rm -f "$HOME/.claude/.statusline-sync.lock"
     rm -f "$HOME/.claude/statusline.sh" "$REFRESH"
     if [ "$purge" = true ]; then
       rm -f "$CONFIG" \
             "$HOME/.claude/.cost_cache.json" \
             "$HOME/.claude/.cost_ledger.json" \
             "$HOME/.claude/.cost_baseline.json" \
-            "$HOME/.claude/.cost_cache.lock" \
-            "$HOME/.claude/.statusline-sync.lock"
+            "$HOME/.claude/.cost_cache.lock"
     fi
     settings_note=""
     [ "$backed_up" = true ] && settings_note=" settings.json backed up to settings.json.bak."

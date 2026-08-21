@@ -179,6 +179,13 @@ This is different from `hide`. `/nutshell hide` (or `all off`) keeps the
 registration and prints a blank row, so you get an empty bar rather than the
 default one. Only `off` gives you Claude Code's own.
 
+Neither command touches a status line it did not install. If `settings.json`
+registers something else, for example one written by Claude Code's own
+`/statusline`, `off` refuses to delete it and `on` refuses to overwrite it;
+`on --force` takes over deliberately. The `SessionStart` hook applies the same
+rule, so installing this plugin never silently replaces a status line you
+already had.
+
 The choice is recorded as `"disabled": true` in `statusline.config.json`, and
 the `SessionStart` sync hook checks it before registering. Without that, the
 hook would put the status line back at the start of the next session and the
