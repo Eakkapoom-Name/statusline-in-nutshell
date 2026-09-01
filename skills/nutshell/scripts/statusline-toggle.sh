@@ -274,7 +274,13 @@ case "$cmd" in
       *) echo "statusline-toggle: 'all' needs on|off" >&2; usage; exit 1 ;;
     esac
     for p in "${PARTS[@]}"; do set_part "$p" "$val"; print_one "$p" "$action"; done
-    is_disabled && echo "note: the status line is off, so this takes effect after 'statusline-toggle.sh on'."
+    # `if`, not `is_disabled && echo`: the && form is the last command in this
+    # branch, so on the normal path (not disabled) it makes a fully successful
+    # run exit 1. SKILL.md shells out to this script, so a non-zero status
+    # reads as a failed toggle.
+    if is_disabled; then
+      echo "note: the status line is off, so this takes effect after 'statusline-toggle.sh on'."
+    fi
     ;;
   model|cost|rate|workspace)
     action="${2:-}"
@@ -287,7 +293,10 @@ case "$cmd" in
       *) echo "statusline-toggle: '$cmd' needs on|off|toggle" >&2; usage; exit 1 ;;
     esac
     print_one "$cmd" "$action"
-    is_disabled && echo "note: the status line is off, so this takes effect after 'statusline-toggle.sh on'."
+    # See the `all` branch: the && form would make a successful toggle exit 1.
+    if is_disabled; then
+      echo "note: the status line is off, so this takes effect after 'statusline-toggle.sh on'."
+    fi
     ;;
   emoji)
     action="${2:-toggle}"

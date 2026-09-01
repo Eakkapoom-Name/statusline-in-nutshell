@@ -222,7 +222,14 @@ git_branch() {
       gitdir=$(sed -n 's/^gitdir: //p' "$dir/.git" 2>/dev/null | head -1)
       break
     fi
-    dir=${dir%/*}
+    # ${dir%/*} returns the value UNCHANGED when it holds no slash, so a
+    # slashless starting directory would spin here forever and hang the
+    # render. Claude Code sends an absolute current_dir, so this is a guard
+    # against a malformed payload rather than a path seen in practice.
+    case "$dir" in
+      */*) dir=${dir%/*} ;;
+      *)   dir="" ;;
+    esac
   done
   [ -n "$gitdir" ] && [ -r "$gitdir/HEAD" ] || return
   head=$(head -1 "$gitdir/HEAD" 2>/dev/null)

@@ -42,7 +42,11 @@ days_ago_date() {
 # temp file is removed.
 safe_write_json() {
   local content="$1" target="$2" tmp
-  tmp="${target}.tmp"
+  # Same-directory mktemp, not a fixed "${target}.tmp": where flock is absent
+  # (stock macOS) two refreshes can run at once, and a shared fixed name lets
+  # one truncate the file the other is about to validate and rename. mktemp
+  # also keeps the rename on the same filesystem, so the mv stays atomic.
+  tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
   printf '%s' "$content" > "$tmp" 2>/dev/null
   if [ -s "$tmp" ] && jq -e 'type == "object"' "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$target" 2>/dev/null
@@ -61,8 +65,16 @@ reset_all_time=0
 # flock is GNU/util-linux only (absent on macOS's stock userland); when it's
 # missing, proceed without locking rather than failing, same degradation
 # pattern as hooks/sync.sh.
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"$LOCK_FILE"
+# The lock descriptor must be open before flock is called on it. Guard the
+# redirection too, not just `command -v flock`: if $LOCK_FILE cannot be opened
+# (read-only home, full disk) the unguarded form left fd 9 closed and then ran
+# flock against it, which fails on every run. Degrade the same way a missing
+# flock does, by proceeding unlocked.
+locked=0
+if command -v flock >/dev/null 2>&1 && exec 9>"$LOCK_FILE" 2>/dev/null; then
+  locked=1
+fi
+if [ "$locked" -eq 1 ]; then
   if [ "$reset_all_time" -eq 1 ]; then
     flock 9
   else
@@ -77,6 +89,12 @@ json=$(ccusage daily --json 2>/dev/null) || exit 0
 today=$(date +%Y-%m-%d)
 days_since_sunday=$(date +%w)  # 0=Sun ... 6=Sat (portable across GNU/BSD date)
 week_start=$(days_ago_date "$days_since_sunday")
+# Neither GNU `date -d` nor BSD `date -v` worked, so week_start is empty. The
+# weekly sum below selects on `.key >= $week_start`, and every date string is
+# >= "", so an empty value would silently report the ALL-TIME total as this
+# week's spend. Fall back to today: under-reporting a partial week is wrong in
+# a way the user can spot, over-reporting it as all-time is not.
+[ -n "$week_start" ] || week_start="$today"
 month_prefix=$(date +%Y-%m)
 
 # Existing ledger, or an empty object if it's missing / unreadable / corrupt.
