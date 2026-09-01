@@ -348,7 +348,8 @@ case "$cmd" in
     if [ "$yes" != true ]; then
       echo "statusline-toggle: 'uninstall' removes the status line registration from settings.json" >&2
       echo "and deletes the installed scripts (statusline.sh, statusline-toggle.sh," >&2
-      echo "cost_cache_refresh.sh) from ~/.claude/. Your toggle config and cost history are kept" >&2
+      echo "cost_cache_refresh.sh) from ~/.claude/. Your toggle config, cost history and rate" >&2
+      echo "cache are kept" >&2
       echo "unless --purge is also given. Re-run to confirm:" >&2
       echo "  statusline-toggle.sh uninstall --yes [--purge]" >&2
       exit 1
@@ -386,14 +387,15 @@ case "$cmd" in
             "$HOME/.claude/.cost_cache.json" \
             "$HOME/.claude/.cost_ledger.json" \
             "$HOME/.claude/.cost_baseline.json" \
-            "$HOME/.claude/.cost_cache.lock"
+            "$HOME/.claude/.cost_cache.lock" \
+            "$HOME/.claude/.rate_cache.json"
     fi
     settings_note=""
     [ "$backed_up" = true ] && settings_note=" settings.json backed up to settings.json.bak."
     if [ "$purge" = true ]; then
       echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh, and purged config/cost/lock files.${settings_note}"
     else
-      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh.${settings_note} Config and cost history were kept."
+      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh.${settings_note} Config, cost history and rate cache were kept."
     fi
     rm -f "$HOME/.claude/statusline-toggle.sh"
     exit 0

@@ -121,17 +121,29 @@ Or just say it: "hide the cost line", "show everything", "turn on emoji",
   land in the backup before it gets repaired.
 - That 1-second interval is deliberate. Claude Code re-runs a status line on
   assistant messages and a few UI events, but not when you switch advisor
-  model or when the cost cache goes stale, so the advisor, cost, and rate
-  segments would sit on old values while the session is idle. The timer
-  re-runs the script on a clock instead, at the cost of one `bash` + `jq`
-  pass per second. Note that deleting `refreshInterval` by hand doesn't
-  stick on the plugin path: the sync hook restores the whole `statusLine`
+  model or when the cost cache goes stale, so the advisor and cost segments
+  would sit on old values while the session is idle. The timer re-runs the
+  script on a clock instead, at the cost of one `bash` + `jq` pass per
+  second. It does not help the rate segment, because re-running the script
+  does not make Claude Code recompute the data it hands you; that one needs
+  the shared cache described below. Note that deleting `refreshInterval` by
+  hand doesn't stick on the plugin path: the sync hook restores the whole `statusLine`
   block at the next session start. To opt out for good, remove the plugin
   and install via `npx` instead, or edit the value in `hooks/sync.sh`.
-- Your own state, `~/.claude/statusline.config.json` and the cost files
-  (`.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`), is
-  never touched by the sync step. Only the toggle script writes the
-  config; only the cost refresher writes the cost files.
+- Your own state, `~/.claude/statusline.config.json`, the cost files
+  (`.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`) and the
+  rate-limit cache (`.rate_cache.json`), is never touched by the sync step.
+  Only the toggle script writes the config; only the cost refresher writes
+  the cost files; only the status line itself writes the rate cache.
+- `.rate_cache.json` is shared between your open sessions. Claude Code only
+  refreshes a session's rate-limit numbers when that session gets an API
+  response, so an idle tab would otherwise sit on a reading from hours ago.
+  Each session publishes the freshest numbers it has seen and displays the
+  freshest any session has published, which is what you want because the
+  limits apply to your account rather than to one tab. A window whose reset
+  time has passed is dropped rather than shown, so the line reads 0% until
+  real numbers arrive instead of repeating a figure already known to be
+  wrong.
 - Two lock files keep concurrent runs from stepping on each other:
   `.statusline-sync.lock` for the sync hook, `.cost_cache.lock` for the
   cost refresher. Neither holds user data. Locking uses `flock` when it's
@@ -151,9 +163,9 @@ session.
 npx install: run the uninstall first, then drop the skill itself with
 `npx skills remove nutshell`.
 
-By default this keeps `statusline.config.json` and your cost history.
-Ask for a purge (or pass `--purge`) to wipe those too. `settings.json`
-is backed up to `settings.json.bak` first.
+By default this keeps `statusline.config.json`, your cost history and the
+rate-limit cache. Ask for a purge (or pass `--purge`) to wipe those too.
+`settings.json` is backed up to `settings.json.bak` first.
 
 Manual fallback, if you'd rather not go through the skill:
 

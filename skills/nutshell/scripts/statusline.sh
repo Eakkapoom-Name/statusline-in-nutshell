@@ -20,7 +20,7 @@ input=$(cat)
 # delimiters even when IFS is set to just one of them, silently shifting
 # fields whenever one is empty (routine: absent .effort, absent .cost).
 # \x1f isn't IFS whitespace, so it doesn't collapse.
-IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost five_pct five_reset week_pct week_reset five_hour_present week_present ws_dir repo_owner repo_name < <(
+IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost five_pct five_reset week_pct week_reset five_hour_present week_present ws_dir repo_owner repo_name rate_raw < <(
   jq -r '[
       (.model.display_name // ""),
       (.effort.level // ""),
@@ -36,7 +36,8 @@ IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost 
       (.rate_limits.seven_day != null),
       (.workspace.current_dir // .cwd // ""),
       (.workspace.repo.owner // ""),
-      (.workspace.repo.name // "")
+      (.workspace.repo.name // ""),
+      (.rate_limits // {})
     ] | map(tostring) | join("\u001f")' <<< "$input" 2>/dev/null
 )
 advisor_raw=$(jq -r '.advisorModel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
@@ -355,6 +356,75 @@ fi
 # account has no rate limits at all" (metered API-key billing), which
 # needs its own rendering rather than a 0% that isn't true. Keep them for
 # that, do not delete them as dead code.
+# Rate limits are PER-SESSION payload state: Claude Code only refreshes them
+# from this session's own API responses, and refreshInterval re-running the
+# script cannot make it recompute the payload. An idle tab therefore freezes
+# at whatever it last saw. Measured across five concurrent sessions, the idle
+# ones sat 20 minutes behind the active one, showing both a stale percentage
+# and a stale reset time. Cost never had this problem because it reads a
+# SHARED on-disk cache, so rate now gets the same treatment: every session
+# publishes the freshest reading it has, and renders the freshest reading any
+# session has published. The limits are account-wide, so the newest reading
+# from any session is the best estimate for all of them.
+#
+# Freshness is ordered by (resets_at, used_percentage), both "higher is
+# fresher", and deliberately NOT by a wall-clock stamp. The payload carries no
+# indication of when it was measured, so stamping it with `now` would let a
+# stale idle tab overwrite a fresh reading. resets_at advances when the
+# rolling window moves, and within one window used_percentage only ever grows,
+# so the pair orders two readings correctly with no timestamp at all.
+#
+# Skipped entirely when the rate line is hidden: that session neither reads
+# nor writes the cache, and any session still showing the line maintains it.
+RATE_CACHE_FILE="$HOME/.claude/.rate_cache.json"
+if [ "$show_rate" = true ]; then
+  # Missing, empty, unreadable or non-object cache reads as no cache at all,
+  # never as a reason to lose the payload's own numbers.
+  rate_cache=$(jq -ce 'select(type == "object")' "$RATE_CACHE_FILE" 2>/dev/null) || rate_cache='{}'
+  [ -n "$rate_cache" ] || rate_cache='{}'
+  case "$rate_raw" in ''|null) rate_raw='{}' ;; esac
+
+  IFS=$'\x1f' read -r five_pct five_reset week_pct week_reset rate_new < <(
+    jq -nr --argjson now "$(date +%s)" --argjson p "$rate_raw" --argjson c "$rate_cache" '
+      # Keep only a window that carries a usable numeric resets_at.
+      def clean($o):
+        if ($o | type) == "object" and ($o.resets_at | type) == "number"
+        then {used_percentage: (($o.used_percentage | numbers) // 0), resets_at: $o.resets_at}
+        else null end;
+      def fresher($a; $b):
+        if $a == null then $b
+        elif $b == null then $a
+        elif [$a.resets_at, $a.used_percentage] >= [$b.resets_at, $b.used_percentage] then $a
+        else $b end;
+      def pick($w): fresher(clean($p[$w]); clean($c[$w]));
+      # A window whose resets_at has passed has rolled over, which is also the
+      # moment Claude Code drops it from the payload. Discard it so the line
+      # falls back to a truthful 0% with no reset time, rather than carrying a
+      # percentage that is known to be wrong, and drop it from the cache too.
+      def live($w): pick($w) | if . != null and .resets_at > $now then . else null end;
+      live("five_hour") as $f | live("seven_day") as $s |
+      ( (if $f == null then {} else {five_hour: $f} end)
+        + (if $s == null then {} else {seven_day: $s} end) ) as $merged |
+      [ ($f.used_percentage // ""), ($f.resets_at // ""),
+        ($s.used_percentage // ""), ($s.resets_at // ""),
+        ($merged | tojson) ] | map(tostring) | join("\u001f")
+    ' 2>/dev/null
+  )
+
+  # Publish only on a real change, so the common case (five idle sessions
+  # re-rendering once a second) does no disk writes at all. Same-directory
+  # mktemp + mv, since several sessions read this file concurrently and a
+  # torn read would drop the rate line's numbers.
+  if [ -n "$rate_new" ] && [ "$rate_new" != "$rate_cache" ]; then
+    rate_tmp=$(mktemp "$RATE_CACHE_FILE.XXXXXX" 2>/dev/null)
+    if [ -n "$rate_tmp" ]; then
+      printf '%s' "$rate_new" > "$rate_tmp" 2>/dev/null \
+        && mv "$rate_tmp" "$RATE_CACHE_FILE" 2>/dev/null \
+        || rm -f "$rate_tmp" 2>/dev/null
+    fi
+  fi
+fi
+
 [ -z "$five_pct" ] && five_pct=0
 [ -z "$week_pct" ] && week_pct=0
 
