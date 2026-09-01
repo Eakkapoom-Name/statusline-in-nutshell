@@ -198,10 +198,6 @@ rm ~/.claude/statusline.sh ~/.claude/statusline-toggle.sh ~/.claude/cost_cache_r
 jq 'del(.statusLine)' ~/.claude/settings.json > ~/.claude/settings.json.new && mv ~/.claude/settings.json.new ~/.claude/settings.json
 ```
 
-## License
-
-MIT. See [LICENSE](LICENSE).
-
 ## Turning it off
 
 `/nutshell off` removes the `statusLine` registration from `settings.json`,
@@ -246,3 +242,7 @@ branch but no repository name. If none of the three resolve, the line is
 omitted rather than printed empty.
 
 Hide it with `/nutshell hide workspace`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
