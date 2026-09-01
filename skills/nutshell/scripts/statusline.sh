@@ -44,10 +44,11 @@ advisor_raw=$(jq -r '.advisorModel // empty' "$HOME/.claude/settings.json" 2>/de
 
 # Alias -> display name. settings.json only stores the bare alias, no
 # runtime lookup exists for the resolved name, so this WILL drift on new
-# model releases (opus was "Opus 4.8", now "Opus 5" as of 2026-07).
+# model releases (opus was "Opus 4.8", now "Opus 5" as of 2026-07; fable
+# was "Fable 5", now "Fable 5.1" as of 2026-09, Claude Code 2.1.255+).
 advisor_display_name() {
   case "$1" in
-    fable) printf 'Fable 5' ;;
+    fable) printf 'Fable 5.1' ;;
     sonnet) printf 'Sonnet 5' ;;
     opus) printf 'Opus 5' ;;
     haiku) printf 'Haiku 4.5' ;;

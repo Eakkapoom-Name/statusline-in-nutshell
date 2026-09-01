@@ -6,7 +6,7 @@ cost windows on line 2, rate-limit usage on line 3, and where you are
 slash command, no manual JSON editing.
 
 ```
-model: Sonnet 5 (medium) | advisor: Fable 5 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
+model: Sonnet 5 (medium) | advisor: Fable 5.1 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
 session: 1.24$ | today: 3.87$ | week: 12.50$ | month: 41.02$ | all-time: 210.33$
 5 hours session: 42% used (resets 6:19am) | weekly session: 18% used (resets Jul 27, 6:00pm)
 workspace: ~/Documents/statusline-in-nutshell | repo: Eakkapoom-Name/statusline-in-nutshell | branch: master
@@ -15,7 +15,7 @@ workspace: ~/Documents/statusline-in-nutshell | repo: Eakkapoom-Name/statusline-
 Emoji mode swaps the text labels for icons:
 
 ```
-💡 Sonnet 5 (medium) | 🎓 Fable 5 | ⏳ 412.0k/1.0m tokens [████░░░░░░] 41% used
+💡 Sonnet 5 (medium) | 🎓 Fable 5.1 | ⏳ 412.0k/1.0m tokens [████░░░░░░] 41% used
 🪙 1.24$ | ⛅ 3.87$ | 📅 12.50$ | 🧾 41.02$ | 💳 210.33$
 🕐 42% used (resets 6:19am) | 🔄 18% used (resets Jul 27, 6:00pm)
 📂 ~/Documents/statusline-in-nutshell | 🌐 Eakkapoom-Name/statusline-in-nutshell | 🌿 master
