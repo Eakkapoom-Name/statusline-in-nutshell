@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Silent install/sync of statusline scripts into ~/.claude/.
 # Never touches user data: statusline.config.json, .cost_cache.json,
-# .cost_ledger.json, .rate_cache.json.
+# .cost_ledger.json, .rate_cache.json, .auth_cache.json.
 # Always exits 0 so a sync problem can never block a session.
 
 # Silent means silent: nothing on stderr either. Without this, a trailing

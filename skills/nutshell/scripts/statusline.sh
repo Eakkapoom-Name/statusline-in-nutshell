@@ -346,17 +346,113 @@ else
   line1+=("$(printf '%s %s %b%.0f%%%b used' "$(label context)" "$bar" "$ORANGE" "$ctx_used" "$RESET")")
 fi
 
-# Both rate segments always render. A missing percentage means the numbers
-# have not landed yet (fresh session, before the first response), so it
-# reads as 0% instead of hiding the whole row. The reset time is still
-# optional: fmt_reset returns empty for an absent or unparseable
-# resets_at, and that branch drops the "(resets ...)" part.
+# Which rate windows this account has. The payload carries rate_limits only
+# for a Claude.ai subscription (Pro, Max, Team, Enterprise) and only after
+# the session's first API response, and each window can be absent on its
+# own: a Team seat observed so far has five_hour with no seven_day. Metered
+# billing (API key, Bedrock, Vertex, Foundry) never gets the object at all,
+# and a 0% row there is a lie, so those windows are omitted rather than
+# zeroed. Two sources decide, and the payload always wins:
 #
-# five_hour_present / week_present are still parsed but no longer used
-# here. They are the only way to tell "not measured yet" from "this
-# account has no rate limits at all" (metered API-key billing), which
-# needs its own rendering rather than a 0% that isn't true. Keep them for
-# that, do not delete them as dead code.
+#  1. `claude auth status` (JSON, documented) reports subscriptionType as
+#     a string on a subscription and null on metered billing. It costs
+#     ~170ms, far too slow for a 1s render, so it runs in the background
+#     and lands in ~/.claude/.auth_cache.json, refreshed every
+#     AUTH_CACHE_MAX_AGE seconds. Values seen: "max"; null under
+#     ANTHROPIC_API_KEY; the key is absent entirely under Bedrock. Team
+#     and Enterprise strings are unobserved, so the rule is "string vs
+#     null", never a plan-name table. A subscriber who also exports
+#     ANTHROPIC_API_KEY but declined it in /config reads as null here
+#     while still drawing on the subscription; the payload override
+#     below covers that after the first response.
+#  2. Which windows the plan actually has is learned by observation, not
+#     looked up: every window that has ever been live is recorded in the
+#     shared rate cache under `seen`, keyed by subscriptionType so a plan
+#     change relearns from scratch. A window that is absent after this
+#     session's first response, and was never seen on this plan, is one
+#     the plan does not have. cost.total_cost_usd > 0 is the
+#     first-response signal: it survives /compact and resets only on
+#     /clear, whereas total_input_tokens resets on compact.
+#
+# Per window: live (payload or cache) -> show; auth says metered -> omit;
+# seen before on this plan -> 0% while waiting; never seen while some other
+# window has been, or never seen and this session has had a response ->
+# omit; otherwise (nothing learned yet and no response yet) -> 0%, fail
+# open like every other part.
+# The reset time stays optional: fmt_reset returns empty for an absent or
+# unparseable resets_at, and that branch drops the "(resets ...)" part.
+#
+# five_hour_present / week_present from the top jq call are superseded by
+# the `seen` bookkeeping and are kept only so the field list stays stable.
+AUTH_CACHE_FILE="$HOME/.claude/.auth_cache.json"
+AUTH_CACHE_MAX_AGE=600
+# auth_plan: "" = unknown (no cache, unreadable, or no subscription_type
+# key), "none" = metered billing, anything else = the subscriptionType
+# string. "none" cannot collide with a real plan name that jq would have
+# emitted as-is, because a null subscriptionType is mapped to it explicitly.
+auth_plan=""
+auth_updated_at=0
+if [ "$show_rate" = true ] && [ -f "$AUTH_CACHE_FILE" ]; then
+  IFS=$'\x1f' read -r auth_plan auth_updated_at < <(
+    jq -r 'select(type == "object") | [
+        (if has("subscription_type") then (.subscription_type // "none") else "" end),
+        (.updated_at // 0)
+      ] | map(tostring) | join("\u001f")' "$AUTH_CACHE_FILE" 2>/dev/null
+  )
+fi
+case "$auth_updated_at" in
+  ''|*[!0-9]*) auth_updated_at=0 ;;
+esac
+auth_age=$(( $(date +%s) - auth_updated_at ))
+[ "$auth_age" -lt 0 ] && auth_age="$AUTH_CACHE_MAX_AGE"
+# Refresh in the background, same shape as the cost refresher: never on the
+# render path, only when the rate row is shown, only when `claude` is on
+# PATH (a missing binary just leaves the cache unknown, which fails open).
+# The lock keeps five idle sessions from each spawning their own probe in
+# the same second; where flock is missing the worst case is a few redundant
+# 170ms processes. `timeout` guards a hung probe where it exists, and is
+# skipped where it does not.
+#
+# A failed probe (non-zero exit, timeout, non-JSON output, or an older
+# Claude Code with no `auth status` subcommand at all) still bumps
+# updated_at, keeping whatever subscription_type the cache already held.
+# Without that, a persistently failing probe would leave the cache stale
+# forever and this block would fork `claude` again on every 1s render, the
+# same storm the ccusage guard above exists to prevent. Keeping the old
+# verdict means a transient error never turns a known plan into an
+# unknown one; a cache that never had a verdict stays unknown and fails
+# open.
+if [ "$show_rate" = true ] && [ "$auth_age" -ge "$AUTH_CACHE_MAX_AGE" ] \
+   && command -v claude >/dev/null 2>&1; then
+  ( nohup bash -c '
+      f="$1"
+      if command -v flock >/dev/null 2>&1 && exec 9>"$f.lock" 2>/dev/null; then
+        flock -n 9 || exit 0
+      fi
+      now=$(date +%s)
+      if command -v timeout >/dev/null 2>&1; then
+        out=$(timeout 15 claude auth status 2>/dev/null) || out=""
+      else
+        out=$(claude auth status 2>/dev/null) || out=""
+      fi
+      new=""
+      [ -n "$out" ] && new=$(printf "%s" "$out" | jq -c --argjson now "$now" \
+        "select(type == \"object\") | {subscription_type: (.subscriptionType // null), updated_at: \$now}" 2>/dev/null)
+      if [ -z "$new" ]; then
+        new=$(jq -c --argjson now "$now" "select(type == \"object\") | .updated_at = \$now" "$f" 2>/dev/null)
+        [ -n "$new" ] || new="{\"updated_at\":$now}"
+      fi
+      tmp=$(mktemp "$f.XXXXXX" 2>/dev/null) || exit 0
+      printf "%s" "$new" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp"
+    ' auth-refresh "$AUTH_CACHE_FILE" >/dev/null 2>&1 & disown ) 2>/dev/null
+fi
+
+# First-response signal for the "never seen" rule above. Any positive
+# session cost means at least one API response has landed. awk, not a
+# glob: "0.0123" must count, and a plain `case` on the string cannot tell
+# it from "0.0".
+responded=$(awk -v c="$cost" 'BEGIN { print (c + 0 > 0) ? "true" : "false" }')
+
 # Rate limits are PER-SESSION payload state: Claude Code only refreshes them
 # from this session's own API responses, and refreshInterval re-running the
 # script cannot make it recompute the payload. An idle tab therefore freezes
@@ -385,8 +481,13 @@ if [ "$show_rate" = true ]; then
   [ -n "$rate_cache" ] || rate_cache='{}'
   case "$rate_raw" in ''|null) rate_raw='{}' ;; esac
 
-  IFS=$'\x1f' read -r five_pct five_reset week_pct week_reset rate_new < <(
-    jq -nr --argjson now "$(date +%s)" --argjson p "$rate_raw" --argjson c "$rate_cache" '
+  # The cache also carries `seen`: {plan, windows}, the windows that have
+  # ever been live on the current plan (see the auth cache comment above).
+  # It is bookkeeping for the show/omit decision, not a reading, and an
+  # older statusline.sh that only knows the window keys ignores it.
+  IFS=$'\x1f' read -r five_show five_pct five_reset week_show week_pct week_reset rate_new < <(
+    jq -nr --argjson now "$(date +%s)" --argjson p "$rate_raw" --argjson c "$rate_cache" \
+       --arg plan "$auth_plan" --argjson responded "$responded" '
       # Keep only a window that carries a usable numeric resets_at.
       def clean($o):
         if ($o | type) == "object" and ($o.resets_at | type) == "number"
@@ -404,10 +505,32 @@ if [ "$show_rate" = true ]; then
       # percentage that is known to be wrong, and drop it from the cache too.
       def live($w): pick($w) | if . != null and .resets_at > $now then . else null end;
       live("five_hour") as $f | live("seven_day") as $s |
+      # Windows seen on this plan: what the cache remembers, if it was
+      # recorded under the same plan, plus whatever is live right now.
+      (($c.seen | objects) // {}) as $seen |
+      (if ($seen.plan // "") == $plan then (($seen.windows | arrays) // []) else [] end
+        + (if $f == null then [] else ["five_hour"] end)
+        + (if $s == null then [] else ["seven_day"] end)
+        | unique) as $windows |
+      # Show/omit per window. Order matters: a live reading is shown no
+      # matter what the auth probe said, so a false "metered" verdict can
+      # only ever cost the pre-first-response 0%, never a real number.
+      # Once any window has been seen on this plan the plan is known, and
+      # a window missing from that set stays omitted even before the first
+      # response, so a Team seat does not flash a weekly 0% at every start.
+      def show($w; $v):
+        if $v != null then true
+        elif $plan == "none" then false
+        elif ($windows | index($w)) != null then true
+        elif ($windows | length) > 0 then false
+        elif $responded then false
+        else true end;
       ( (if $f == null then {} else {five_hour: $f} end)
-        + (if $s == null then {} else {seven_day: $s} end) ) as $merged |
-      [ ($f.used_percentage // ""), ($f.resets_at // ""),
-        ($s.used_percentage // ""), ($s.resets_at // ""),
+        + (if $s == null then {} else {seven_day: $s} end)
+        + (if ($windows | length) == 0 then {} else {seen: {plan: $plan, windows: $windows}} end)
+      ) as $merged |
+      [ show("five_hour"; $f), ($f.used_percentage // ""), ($f.resets_at // ""),
+        show("seven_day"; $s), ($s.used_percentage // ""), ($s.resets_at // ""),
         ($merged | tojson) ] | map(tostring) | join("\u001f")
     ' 2>/dev/null
   )
@@ -429,19 +552,23 @@ fi
 [ -z "$five_pct" ] && five_pct=0
 [ -z "$week_pct" ] && week_pct=0
 
-reset_str=$(fmt_reset "$five_reset")
-if [ -n "$reset_str" ]; then
-  line3+=("$(printf '%s %b%.0f%%%b used (resets %b%s%b)' "$(label rate_five)" "$ORANGE" "$five_pct" "$RESET" "$ORANGE" "$reset_str" "$RESET")")
-else
-  line3+=("$(printf '%s %b%.0f%%%b used' "$(label rate_five)" "$ORANGE" "$five_pct" "$RESET")")
-fi
+# A window whose show flag is not exactly "true" (the jq call failed, or the
+# rate part is hidden and the call never ran) falls back to the old
+# always-render behaviour, so a broken cache can hide nothing. An omitted
+# segment simply never lands in line3; when both are omitted the row is
+# dropped by the same empty-array check every other row uses.
+render_rate_window() {
+  local key="$1" pct="$2" reset="$3" reset_str
+  reset_str=$(fmt_reset "$reset")
+  if [ -n "$reset_str" ]; then
+    printf '%s %b%.0f%%%b used (resets %b%s%b)' "$(label "$key")" "$ORANGE" "$pct" "$RESET" "$ORANGE" "$reset_str" "$RESET"
+  else
+    printf '%s %b%.0f%%%b used' "$(label "$key")" "$ORANGE" "$pct" "$RESET"
+  fi
+}
 
-reset_str=$(fmt_reset "$week_reset")
-if [ -n "$reset_str" ]; then
-  line3+=("$(printf '%s %b%.0f%%%b used (resets %b%s%b)' "$(label rate_week)" "$ORANGE" "$week_pct" "$RESET" "$ORANGE" "$reset_str" "$RESET")")
-else
-  line3+=("$(printf '%s %b%.0f%%%b used' "$(label rate_week)" "$ORANGE" "$week_pct" "$RESET")")
-fi
+[ "$five_show" != false ] && line3+=("$(render_rate_window rate_five "$five_pct" "$five_reset")")
+[ "$week_show" != false ] && line3+=("$(render_rate_window rate_week "$week_pct" "$week_reset")")
 
 # Render one "label X.XX$" cost item, value+$ colored. label_text is already
 # fully formed by label() (word + colon, or a bare icon in emoji mode).

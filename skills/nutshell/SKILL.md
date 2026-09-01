@@ -36,7 +36,7 @@ argument-hint: "[show|hide|model|cost|rate] | emoji | status | reset-all-time-co
    and a few UI events, so disk-sourced segments (advisor, cost, rate)
    stay stale while the session is idle. Never touch `statusline.config.json`,
    `.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`,
-   `.rate_cache.json`.
+   `.rate_cache.json`, `.auth_cache.json`.
 1. "turn the status line off", "give me the default status line back",
    "disable it" -> `bash ~/.claude/statusline-toggle.sh off`. "turn it back
    on", "restore it" -> `... on`. These are NOT the same as `hide`/`show`:

@@ -131,10 +131,11 @@ Or just say it: "hide the cost line", "show everything", "turn on emoji",
   block at the next session start. To opt out for good, remove the plugin
   and install via `npx` instead, or edit the value in `hooks/sync.sh`.
 - Your own state, `~/.claude/statusline.config.json`, the cost files
-  (`.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`) and the
-  rate-limit cache (`.rate_cache.json`), is never touched by the sync step.
-  Only the toggle script writes the config; only the cost refresher writes
-  the cost files; only the status line itself writes the rate cache.
+  (`.cost_cache.json`, `.cost_ledger.json`, `.cost_baseline.json`), the
+  rate-limit cache (`.rate_cache.json`) and the auth cache
+  (`.auth_cache.json`), is never touched by the sync step. Only the toggle
+  script writes the config; only the cost refresher writes the cost files;
+  only the status line itself writes the rate and auth caches.
 - `.rate_cache.json` is shared between your open sessions. Claude Code only
   refreshes a session's rate-limit numbers when that session gets an API
   response, so an idle tab would otherwise sit on a reading from hours ago.
@@ -144,9 +145,30 @@ Or just say it: "hide the cost line", "show everything", "turn on emoji",
   time has passed is dropped rather than shown, so the line reads 0% until
   real numbers arrive instead of repeating a figure already known to be
   wrong.
+- The rate row follows your plan. Claude Code only hands a status line
+  `rate_limits` when you are on a Claude.ai subscription, and each window
+  can be missing on its own: a Team seat seen so far has the 5-hour window
+  and no weekly one, while Pro and Max have both. API-key, Bedrock, Vertex
+  and Foundry billing have neither, and a 0% there would be a lie. So the
+  status line asks `claude auth status` (in the background, once every 10
+  minutes, cached in `.auth_cache.json`) whether the account is a
+  subscription, and remembers in `.rate_cache.json` which windows it has
+  ever actually seen on that plan. A window shows when it has a live
+  reading, or when it has been seen before on this plan (as 0% while
+  waiting). One that was never seen on this plan is omitted once the other
+  window has been, or once the session has had its first response. When
+  both are omitted the row disappears. Before anything has been learned
+  and before the first response, or when `claude` is not on `PATH`, the
+  row falls open to 0% the way it always has. A real reading
+  in the payload always wins over the cached verdict, so a session that
+  exports `ANTHROPIC_API_KEY` but declined it in `/config` only loses the
+  pre-first-response 0%. Because the cache is shared, running an API-key
+  session and a subscription session side by side makes the two disagree
+  about the account; whichever probed last wins until the next refresh.
 - Two lock files keep concurrent runs from stepping on each other:
   `.statusline-sync.lock` for the sync hook, `.cost_cache.lock` for the
-  cost refresher. Neither holds user data. Locking uses `flock` when it's
+  cost refresher, and `.auth_cache.json.lock` for the auth probe. None
+  holds user data. Locking uses `flock` when it's
   available and just skips it otherwise, so a system without `flock`
   still works, just without the race protection.
 
@@ -163,8 +185,9 @@ session.
 npx install: run the uninstall first, then drop the skill itself with
 `npx skills remove nutshell`.
 
-By default this keeps `statusline.config.json`, your cost history and the
-rate-limit cache. Ask for a purge (or pass `--purge`) to wipe those too.
+By default this keeps `statusline.config.json`, your cost history, the
+rate-limit cache and the auth cache. Ask for a purge (or pass `--purge`) to
+wipe those too.
 `settings.json` is backed up to `settings.json.bak` first.
 
 Manual fallback, if you'd rather not go through the skill:
