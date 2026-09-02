@@ -148,6 +148,14 @@ prefix, for example `/nutshell hide cost`.
   (`.rate_cache.json`) and the auth cache (`.auth_cache.json`). Only the
   toggle script writes the config, only the cost refresher writes the cost
   files, and only the status line itself writes the rate and auth caches.
+- Other tools can feed the cost windows. Any `~/.claude/.cost_ledger_<source>.json`
+  holding `{"YYYY-MM-DD": cost}` is added, day by day, to what `ccusage`
+  reports before today, week, month and all-time are summed, and
+  `reset-all-time-cost` resets that spend too. The refresher only reads these
+  files: one that is not a JSON object is skipped, and inside one only date
+  keys with numeric values count. Meant for spend `ccusage` cannot see, for
+  example a local OpenRouter proxy recording the credits it was actually
+  charged.
 - `.rate_cache.json` is shared between your subscription sessions. Claude
   Code only refreshes a session's rate-limit numbers when that session gets
   an API response, so an idle tab would otherwise show a reading from hours

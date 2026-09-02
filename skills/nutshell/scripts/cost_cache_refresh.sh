@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refreshes ~/.claude/.cost_cache.json with today / this-week (Sun-Sat) /
-# this-month / all-time Claude Code spend.
+# this-month / all-time spend: what ccusage reports plus any extra ledgers.
 #
 # Cost is sourced from `ccusage daily --json` (which scans local transcript logs),
 # but ccusage only sees logs that STILL EXIST — Claude Code prunes old transcript
@@ -14,6 +14,14 @@
 #
 # Caveat: the ledger can only protect history from its first run forward. Any cost
 # ccusage had already lost before the ledger existed cannot be recovered.
+#
+# Other tools can contribute spend of their own through extra ledgers,
+# ~/.claude/.cost_ledger_<source>.json, in the same {"YYYY-MM-DD": cost} shape
+# (a local OpenRouter proxy, say, recording the credits it was actually
+# charged). Their per-day values are added to the ccusage ledger's before the
+# windows are summed. This script never writes them: each source owns its file,
+# and each is expected to be monotonic per day (only ever adding), which is what
+# lets the all-time baseline below treat the combined totals like the ledger.
 #
 # ccusage takes several seconds, so this runs in the background and is never awaited
 # by statusline.sh.
@@ -119,9 +127,26 @@ merged=$(jq -n --argjson a "$ledger" --argjson b "$ccusage_days" '
 ledger_out=$(printf '%s' "$merged" | jq -S .)
 safe_write_json "$ledger_out" "$LEDGER_FILE"
 
-# On an explicit reset, freeze the just-merged ledger as the all-time baseline.
+# Fold in the extra ledgers (see the header). A file that is not a JSON object
+# is skipped whole, and inside one only date keys with numeric values count, so
+# a foreign, half-written or corrupt file cannot poison the sums. The ccusage
+# ledger persisted above stays free of them.
+combined=$merged
+for extra_file in "$HOME/.claude/.cost_ledger_"*.json; do
+  [ -f "$extra_file" ] || continue
+  extra=$(jq -e 'select(type == "object")
+    | with_entries(select((.key | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+                          and (.value | type == "number")))' "$extra_file" 2>/dev/null) || continue
+  combined=$(jq -n --argjson a "$combined" --argjson b "$extra" '
+    reduce (($a + $b) | keys_unsorted[]) as $k
+      ({}; .[$k] = (($a[$k] // 0) + ($b[$k] // 0)))
+  ')
+done
+
+# On an explicit reset, freeze the combined per-day totals as the all-time
+# baseline, so extra-ledger spend up to now is reset along with ccusage's.
 if [ "$reset_all_time" -eq 1 ]; then
-  safe_write_json "$ledger_out" "$BASELINE_FILE"
+  safe_write_json "$(printf '%s' "$combined" | jq -S .)" "$BASELINE_FILE"
 fi
 
 # All-time counts only per-day spend ABOVE the baseline snapshot (no baseline file =>
@@ -132,8 +157,9 @@ fi
 # visible days.
 baseline=$(jq -e . "$BASELINE_FILE" 2>/dev/null) || baseline='{}'
 
-# Sum the four windows from the merged ledger (all-time net of the baseline).
-result=$(printf '%s' "$merged" | jq \
+# Sum the four windows from the combined per-day totals (all-time net of the
+# baseline).
+result=$(printf '%s' "$combined" | jq \
   --arg today "$today" \
   --arg week_start "$week_start" \
   --arg month_prefix "$month_prefix" \
