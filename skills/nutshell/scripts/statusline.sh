@@ -386,7 +386,16 @@ fi
 # five_hour_present / week_present from the top jq call are superseded by
 # the `seen` bookkeeping and are kept only so the field list stays stable.
 AUTH_CACHE_FILE="$HOME/.claude/.auth_cache.json"
-AUTH_CACHE_MAX_AGE=600
+AUTH_CRED_FILE="$HOME/.claude/.credentials.json"
+AUTH_CACHE_MAX_AGE=300
+
+# Modification time of a file as unix seconds, GNU (-c) or BSD (-f) style.
+# Prints nothing when the file is absent or neither flavour is understood,
+# which reads as "no signal" wherever it is used, never as "changed".
+file_mtime() {
+  [ -e "$1" ] || return 1
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
 # auth_plan: "" = unknown (no cache, unreadable, or no subscription_type
 # key), "none" = metered billing, anything else = the subscriptionType
 # string. "none" cannot collide with a real plan name that jq would have
@@ -404,10 +413,11 @@ AUTH_CACHE_MAX_AGE=600
 auth_plan=""
 auth_updated_at=0
 if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ -f "$AUTH_CACHE_FILE" ]; then
-  IFS=$'\x1f' read -r auth_plan auth_updated_at < <(
+  IFS=$'\x1f' read -r auth_plan auth_updated_at auth_sig < <(
     jq -r --arg s "$session_id" 'select(type == "object") | (.sessions[$s]? | objects) // {} | [
         (if has("subscription_type") then (.subscription_type // "none") else "" end),
-        (.updated_at // 0)
+        (.updated_at // 0),
+        (.sig // "")
       ] | map(tostring) | join("\u001f")' "$AUTH_CACHE_FILE" 2>/dev/null
   )
 fi
@@ -420,7 +430,8 @@ fi
 # a gateway session that does report rate limits still renders them, since a
 # live reading beats the plan in the show/omit rules below.
 if [ -z "$auth_plan" ] && { [ -n "${ANTHROPIC_BASE_URL:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] \
-  || [ -n "${ANTHROPIC_API_KEY:-}" ]; }; then
+  || [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${CLAUDE_CODE_USE_BEDROCK:-}" ] \
+  || [ -n "${CLAUDE_CODE_USE_VERTEX:-}" ]; }; then
   auth_plan=none
 fi
 case "$auth_updated_at" in
@@ -428,6 +439,30 @@ case "$auth_updated_at" in
 esac
 auth_age=$(( $(date +%s) - auth_updated_at ))
 [ "$auth_age" -lt 0 ] && auth_age="$AUTH_CACHE_MAX_AGE"
+
+# Two things beside age make a verdict stale, and both force the refresh
+# below rather than waiting out AUTH_CACHE_MAX_AGE:
+#
+#  - .credentials.json's mtime moved since the probe. Every `/login`, logout
+#    and account switch rewrites that file, so this notices a switch within a
+#    render. A token refresh moves it too, which costs one extra probe. A
+#    macOS install keeping credentials in the Keychain has no such file, so
+#    the mtime is empty on both sides and this never fires there; the age
+#    check is the only trigger in that case.
+#  - the verdict says metered while the payload carries rate_limits. Only an
+#    account with limits gets those, so the verdict is provably wrong. Free,
+#    and it beats the other two to the answer.
+# Normalized here rather than in the rate block below, which used to be the
+# first thing to look at it.
+case "$rate_raw" in ''|null) rate_raw='{}' ;; esac
+auth_cred_mtime=$(file_mtime "$AUTH_CRED_FILE")
+if [ -n "$auth_plan" ]; then
+  if [ "$auth_sig" != "$auth_cred_mtime" ]; then
+    auth_age="$AUTH_CACHE_MAX_AGE"
+  elif [ "$auth_plan" = none ] && [ "$rate_raw" != '{}' ]; then
+    auth_age="$AUTH_CACHE_MAX_AGE"
+  fi
+fi
 # Refresh in the background, same shape as the cost refresher: never on the
 # render path, only when the rate row is shown, only when `claude` is on
 # PATH (a missing binary just leaves the cache unknown, which fails open).
@@ -448,12 +483,14 @@ auth_age=$(( $(date +%s) - auth_updated_at ))
 if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ "$auth_age" -ge "$AUTH_CACHE_MAX_AGE" ] \
    && command -v claude >/dev/null 2>&1; then
   ( nohup bash -c '
-      f="$1"; sid="$2"
+      f="$1"; sid="$2"; cred="$3"
       # One shared lock for the whole job, so the read-modify-write of the
-      # sessions map cannot lose another session'"'"'s entry. Taking it
+      # sessions map does not lose another session'"'"'s entry. Taking it
       # non-blocking means a second session skips this round rather than
       # queueing; its next render is a second later and the probe takes about
-      # 200ms, so it simply gets the lock then.
+      # 200ms, so it simply gets the lock then. Where flock is missing (stock
+      # macOS) two probes can interleave and one entry is lost, which costs
+      # that session a re-probe at its next cycle, nothing worse.
       if command -v flock >/dev/null 2>&1 && exec 9>"$f.lock" 2>/dev/null; then
         flock -n 9 || exit 0
       fi
@@ -463,26 +500,32 @@ if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ "$auth_age" -ge "$AUTH_C
       else
         out=$(claude auth status 2>/dev/null) || out=""
       fi
+      # The credentials mtime is read here, after the probe, so the stored
+      # signature always matches the state the verdict was taken from.
+      sig=""
+      if [ -e "$cred" ]; then
+        sig=$(stat -c %Y "$cred" 2>/dev/null || stat -f %m "$cred" 2>/dev/null)
+      fi
       entry=""
-      [ -n "$out" ] && entry=$(printf "%s" "$out" | jq -c --argjson now "$now" \
-        "select(type == \"object\") | {subscription_type: (.subscriptionType // null), updated_at: \$now}" 2>/dev/null)
+      [ -n "$out" ] && entry=$(printf "%s" "$out" | jq -c --argjson now "$now" --arg sig "$sig" \
+        "select(type == \"object\") | {subscription_type: (.subscriptionType // null), updated_at: \$now, sig: \$sig}" 2>/dev/null)
       cur=$(jq -c "select(type == \"object\")" "$f" 2>/dev/null)
       [ -n "$cur" ] || cur="{}"
       # A failed probe keeps this session'"'"'s previous verdict and only bumps
       # the stamp, so a transient error never turns a known plan into an
       # unknown one and a persistently failing probe still cannot fork
       # `claude` on every render.
-      new=$(printf "%s" "$cur" | jq -c --arg s "$sid" --argjson now "$now" --argjson e "${entry:-null}" "
+      new=$(printf "%s" "$cur" | jq -c --arg s "$sid" --argjson now "$now" --arg sig "$sig" --argjson e "${entry:-null}" "
         ((.sessions? | objects) // {}) as \$all
         | (\$all | with_entries(select((.value.updated_at? | numbers) != null
              and .value.updated_at > (\$now - 604800) and .value.updated_at <= \$now))) as \$keep
         | (if \$e != null then \$e
-           else ((\$all[\$s]? | objects) // {}) + {updated_at: \$now} end) as \$mine
+           else ((\$all[\$s]? | objects) // {}) + {updated_at: \$now, sig: \$sig} end) as \$mine
         | {sessions: (\$keep + {(\$s): \$mine})}" 2>/dev/null)
       [ -n "$new" ] || exit 0
       tmp=$(mktemp "$f.XXXXXX" 2>/dev/null) || exit 0
       printf "%s" "$new" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp"
-    ' auth-refresh "$AUTH_CACHE_FILE" "$session_id" >/dev/null 2>&1 & disown ) 2>/dev/null
+    ' auth-refresh "$AUTH_CACHE_FILE" "$session_id" "$AUTH_CRED_FILE" >/dev/null 2>&1 & disown ) 2>/dev/null
 fi
 
 # First-response signal for the "never seen" rule above. Any positive
@@ -531,7 +574,6 @@ if [ "$show_rate" = true ]; then
     rate_cache=$(jq -ce 'select(type == "object")' "$RATE_CACHE_FILE" 2>/dev/null) || rate_cache='{}'
     [ -n "$rate_cache" ] || rate_cache='{}'
   fi
-  case "$rate_raw" in ''|null) rate_raw='{}' ;; esac
 
   # The cache also carries `seen`: {plan, windows}, the windows that have
   # ever been live on the current plan (see the auth cache comment above).

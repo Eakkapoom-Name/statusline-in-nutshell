@@ -158,7 +158,7 @@ prefix, for example `/nutshell hide cost`.
   weekly window, a Team seat with only a 5-hour limit shows just that one,
   and API-key, Bedrock, Vertex and Foundry billing get no rate row at all.
   A background `claude auth status` probe, cached in `.auth_cache.json` and
-  refreshed every 10 minutes, tells the two apart, and the windows your plan
+  refreshed every 5 minutes, tells the two apart, and the windows your plan
   has are learned from the ones actually seen. A real reading always wins.
 - That probe is answered per session, not per machine, because auth is
   whatever a session was launched with. Run a Max session and an API-key or
@@ -169,6 +169,11 @@ prefix, for example `/nutshell hide cost`.
   first probe lands, roughly a render or two, a session that exports
   `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` is
   treated as metered on that evidence alone.
+- A `/login` mid-session is noticed too: the verdict is re-taken when
+  `~/.claude/.credentials.json` changes (every login, logout and token refresh
+  rewrites it), and the instant a session marked metered receives rate limits
+  anyway. On a macOS install keeping credentials in the Keychain there is no
+  file to watch, so the 5 minute refresh is what notices.
 - Three lock files keep concurrent runs from stepping on each other:
   `.statusline-sync.lock` for the sync hook, `.cost_cache.lock` for the
   cost refresher and `.auth_cache.json.lock` for the auth probe. None of
