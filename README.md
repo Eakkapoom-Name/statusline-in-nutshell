@@ -148,18 +148,27 @@ prefix, for example `/nutshell hide cost`.
   (`.rate_cache.json`) and the auth cache (`.auth_cache.json`). Only the
   toggle script writes the config, only the cost refresher writes the cost
   files, and only the status line itself writes the rate and auth caches.
-- `.rate_cache.json` is shared between your open sessions. Claude Code only
-  refreshes a session's rate-limit numbers when that session gets an API
-  response, so an idle tab would otherwise show a reading from hours ago.
-  Each session publishes the freshest numbers it has seen and displays the
-  freshest any session has published. A window whose reset time has passed
-  is dropped rather than shown.
+- `.rate_cache.json` is shared between your subscription sessions. Claude
+  Code only refreshes a session's rate-limit numbers when that session gets
+  an API response, so an idle tab would otherwise show a reading from hours
+  ago. Each session publishes the freshest numbers it has seen and displays
+  the freshest any session has published. A window whose reset time has
+  passed is dropped rather than shown.
 - The rate row follows your plan. Pro and Max show both the 5-hour and the
   weekly window, a Team seat with only a 5-hour limit shows just that one,
   and API-key, Bedrock, Vertex and Foundry billing get no rate row at all.
-  A background `claude auth status` probe, cached for 10 minutes in
-  `.auth_cache.json`, tells the two apart, and the windows your plan has
-  are learned from the ones actually seen. A real reading always wins.
+  A background `claude auth status` probe, cached in `.auth_cache.json` and
+  refreshed every 10 minutes, tells the two apart, and the windows your plan
+  has are learned from the ones actually seen. A real reading always wins.
+- That probe is answered per session, not per machine, because auth is
+  whatever a session was launched with. Run a Max session and an API-key or
+  gateway session side by side and each gets its own verdict, keyed by
+  session id. The metered one is also kept out of the shared rate cache
+  entirely, reading and writing: its own payload still renders, but it can
+  neither show your subscription's percentages nor overwrite them. Until its
+  first probe lands, roughly a render or two, a session that exports
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` is
+  treated as metered on that evidence alone.
 - Three lock files keep concurrent runs from stepping on each other:
   `.statusline-sync.lock` for the sync hook, `.cost_cache.lock` for the
   cost refresher and `.auth_cache.json.lock` for the auth probe. None of

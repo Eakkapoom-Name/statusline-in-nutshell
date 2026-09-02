@@ -20,7 +20,7 @@ input=$(cat)
 # delimiters even when IFS is set to just one of them, silently shifting
 # fields whenever one is empty (routine: absent .effort, absent .cost).
 # \x1f isn't IFS whitespace, so it doesn't collapse.
-IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost five_pct five_reset week_pct week_reset five_hour_present week_present ws_dir repo_owner repo_name rate_raw < <(
+IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost session_id five_pct five_reset week_pct week_reset five_hour_present week_present ws_dir repo_owner repo_name rate_raw < <(
   jq -r '[
       (.model.display_name // ""),
       (.effort.level // ""),
@@ -28,6 +28,7 @@ IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens cost 
       (.context_window.total_input_tokens // ""),
       (.context_window.context_window_size // ""),
       (.cost.total_cost_usd // ""),
+      (.session_id // ""),
       (.rate_limits.five_hour.used_percentage // ""),
       (.rate_limits.five_hour.resets_at // ""),
       (.rate_limits.seven_day.used_percentage // ""),
@@ -390,15 +391,37 @@ AUTH_CACHE_MAX_AGE=600
 # key), "none" = metered billing, anything else = the subscriptionType
 # string. "none" cannot collide with a real plan name that jq would have
 # emitted as-is, because a null subscriptionType is mapped to it explicitly.
+#
+# The verdict is PER SESSION, not per machine, which is why the cache is a
+# `sessions` map keyed by session_id rather than one pair of fields. Auth is
+# whatever the session was launched with: run a Max session and an API-key or
+# gateway session side by side and `claude auth status` answers differently in
+# each, because the background probe inherits the env of the session that
+# spawned it. A single shared verdict made the two tabs overwrite each other
+# every AUTH_CACHE_MAX_AGE seconds, and whichever wrote last decided what BOTH
+# tabs rendered. Entries older than a week are dropped on write; a session
+# that lived that long re-probes once.
 auth_plan=""
 auth_updated_at=0
-if [ "$show_rate" = true ] && [ -f "$AUTH_CACHE_FILE" ]; then
+if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ -f "$AUTH_CACHE_FILE" ]; then
   IFS=$'\x1f' read -r auth_plan auth_updated_at < <(
-    jq -r 'select(type == "object") | [
+    jq -r --arg s "$session_id" 'select(type == "object") | (.sessions[$s]? | objects) // {} | [
         (if has("subscription_type") then (.subscription_type // "none") else "" end),
         (.updated_at // 0)
       ] | map(tostring) | join("\u001f")' "$AUTH_CACHE_FILE" 2>/dev/null
   )
+fi
+
+# A launcher that points this session at a non-Anthropic endpoint exports one
+# of these (that is how such a session gets its credentials at all), so they
+# settle "metered" for the render or two before the background probe lands,
+# which would otherwise fail open and flash another account's numbers. Only
+# consulted while the probe has said nothing: a real verdict always wins, and
+# a gateway session that does report rate limits still renders them, since a
+# live reading beats the plan in the show/omit rules below.
+if [ -z "$auth_plan" ] && { [ -n "${ANTHROPIC_BASE_URL:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] \
+  || [ -n "${ANTHROPIC_API_KEY:-}" ]; }; then
+  auth_plan=none
 fi
 case "$auth_updated_at" in
   ''|*[!0-9]*) auth_updated_at=0 ;;
@@ -422,10 +445,15 @@ auth_age=$(( $(date +%s) - auth_updated_at ))
 # verdict means a transient error never turns a known plan into an
 # unknown one; a cache that never had a verdict stays unknown and fails
 # open.
-if [ "$show_rate" = true ] && [ "$auth_age" -ge "$AUTH_CACHE_MAX_AGE" ] \
+if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ "$auth_age" -ge "$AUTH_CACHE_MAX_AGE" ] \
    && command -v claude >/dev/null 2>&1; then
   ( nohup bash -c '
-      f="$1"
+      f="$1"; sid="$2"
+      # One shared lock for the whole job, so the read-modify-write of the
+      # sessions map cannot lose another session'"'"'s entry. Taking it
+      # non-blocking means a second session skips this round rather than
+      # queueing; its next render is a second later and the probe takes about
+      # 200ms, so it simply gets the lock then.
       if command -v flock >/dev/null 2>&1 && exec 9>"$f.lock" 2>/dev/null; then
         flock -n 9 || exit 0
       fi
@@ -435,16 +463,26 @@ if [ "$show_rate" = true ] && [ "$auth_age" -ge "$AUTH_CACHE_MAX_AGE" ] \
       else
         out=$(claude auth status 2>/dev/null) || out=""
       fi
-      new=""
-      [ -n "$out" ] && new=$(printf "%s" "$out" | jq -c --argjson now "$now" \
+      entry=""
+      [ -n "$out" ] && entry=$(printf "%s" "$out" | jq -c --argjson now "$now" \
         "select(type == \"object\") | {subscription_type: (.subscriptionType // null), updated_at: \$now}" 2>/dev/null)
-      if [ -z "$new" ]; then
-        new=$(jq -c --argjson now "$now" "select(type == \"object\") | .updated_at = \$now" "$f" 2>/dev/null)
-        [ -n "$new" ] || new="{\"updated_at\":$now}"
-      fi
+      cur=$(jq -c "select(type == \"object\")" "$f" 2>/dev/null)
+      [ -n "$cur" ] || cur="{}"
+      # A failed probe keeps this session'"'"'s previous verdict and only bumps
+      # the stamp, so a transient error never turns a known plan into an
+      # unknown one and a persistently failing probe still cannot fork
+      # `claude` on every render.
+      new=$(printf "%s" "$cur" | jq -c --arg s "$sid" --argjson now "$now" --argjson e "${entry:-null}" "
+        ((.sessions? | objects) // {}) as \$all
+        | (\$all | with_entries(select((.value.updated_at? | numbers) != null
+             and .value.updated_at > (\$now - 604800) and .value.updated_at <= \$now))) as \$keep
+        | (if \$e != null then \$e
+           else ((\$all[\$s]? | objects) // {}) + {updated_at: \$now} end) as \$mine
+        | {sessions: (\$keep + {(\$s): \$mine})}" 2>/dev/null)
+      [ -n "$new" ] || exit 0
       tmp=$(mktemp "$f.XXXXXX" 2>/dev/null) || exit 0
       printf "%s" "$new" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp"
-    ' auth-refresh "$AUTH_CACHE_FILE" >/dev/null 2>&1 & disown ) 2>/dev/null
+    ' auth-refresh "$AUTH_CACHE_FILE" "$session_id" >/dev/null 2>&1 & disown ) 2>/dev/null
 fi
 
 # First-response signal for the "never seen" rule above. Any positive
@@ -473,12 +511,26 @@ responded=$(awk -v c="$cost" 'BEGIN { print (c + 0 > 0) ? "true" : "false" }')
 #
 # Skipped entirely when the rate line is hidden: that session neither reads
 # nor writes the cache, and any session still showing the line maintains it.
+#
+# A metered session takes no part in that cache, neither reading nor writing.
+# Sharing is only sound between sessions on the same account, and the numbers
+# in there belong to whichever subscription published them: an API-key or
+# gateway tab that reads them renders someone else's percentages, and since a
+# live reading outranks the auth verdict in the show/omit rules below, it
+# would do so however confidently the probe said "metered". Its own payload
+# still renders, so a gateway that does report limits is unaffected. Not
+# writing matters just as much: publishing an empty reading once a second
+# would blank the line in the subscription tab that is actually metered.
 RATE_CACHE_FILE="$HOME/.claude/.rate_cache.json"
 if [ "$show_rate" = true ]; then
-  # Missing, empty, unreadable or non-object cache reads as no cache at all,
-  # never as a reason to lose the payload's own numbers.
-  rate_cache=$(jq -ce 'select(type == "object")' "$RATE_CACHE_FILE" 2>/dev/null) || rate_cache='{}'
-  [ -n "$rate_cache" ] || rate_cache='{}'
+  if [ "$auth_plan" = none ]; then
+    rate_cache='{}'
+  else
+    # Missing, empty, unreadable or non-object cache reads as no cache at all,
+    # never as a reason to lose the payload's own numbers.
+    rate_cache=$(jq -ce 'select(type == "object")' "$RATE_CACHE_FILE" 2>/dev/null) || rate_cache='{}'
+    [ -n "$rate_cache" ] || rate_cache='{}'
+  fi
   case "$rate_raw" in ''|null) rate_raw='{}' ;; esac
 
   # The cache also carries `seen`: {plan, windows}, the windows that have
@@ -539,7 +591,7 @@ if [ "$show_rate" = true ]; then
   # re-rendering once a second) does no disk writes at all. Same-directory
   # mktemp + mv, since several sessions read this file concurrently and a
   # torn read would drop the rate line's numbers.
-  if [ -n "$rate_new" ] && [ "$rate_new" != "$rate_cache" ]; then
+  if [ -n "$rate_new" ] && [ "$rate_new" != "$rate_cache" ] && [ "$auth_plan" != none ]; then
     rate_tmp=$(mktemp "$RATE_CACHE_FILE.XXXXXX" 2>/dev/null)
     if [ -n "$rate_tmp" ]; then
       printf '%s' "$rate_new" > "$rate_tmp" 2>/dev/null \
