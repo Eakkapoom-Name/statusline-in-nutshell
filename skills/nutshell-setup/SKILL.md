@@ -7,15 +7,16 @@ description: Install or repair the nutshell status line by copying the bundled s
 
 The `SessionStart` hook installs the scripts at every session start, so this
 skill is the mid-session repair: it is what the other nutshell status line
-skills invoke when they find `~/.claude/nutshell/bin/statusline-toggle.sh` missing, and
-what you run yourself when the status line looks wrong without waiting for a
-restart.
+skills invoke when they find `~/.claude/nutshell/bin/statusline-toggle.sh`
+missing, and what you run yourself when the status line looks wrong without
+waiting for a restart.
 
 Everything this plugin owns lives under `~/.claude/nutshell/`:
 
 ```
 ~/.claude/nutshell/
-  bin/     statusline.sh  statusline-toggle.sh  cost_cache_refresh.sh
+  bin/     nutshell-lib.sh  statusline.sh  statusline-toggle.sh
+           cost_cache_refresh.sh  auth_cache_refresh.sh
   config.json
   state/   cost_cache.json  cost_ledger.json  cost_baseline.json
            rate_cache.json  auth_cache.json  ledger_<source>.json
@@ -24,45 +25,40 @@ Everything this plugin owns lives under `~/.claude/nutshell/`:
 
 ## What to do
 
-1. The three bundled scripts live in `${CLAUDE_SKILL_DIR}/scripts/`. If that
-   variable does not resolve, use the `scripts/` directory beside this
-   SKILL.md.
-2. Create `~/.claude/nutshell/bin/`, `~/.claude/nutshell/state/` and
-   `~/.claude/nutshell/locks/` if they do not exist.
-3. Migrate a pre-0.3.1 install, which kept everything loose in `~/.claude/`.
-   Move each of these, and only when the destination does not already exist,
-   so an already-migrated or half-migrated install is left alone:
-   `statusline.config.json` to `nutshell/config.json`, `.cost_cache.json`,
-   `.cost_ledger.json`, `.cost_baseline.json`, `.rate_cache.json` and
-   `.auth_cache.json` to `nutshell/state/` under their names without the
-   leading dot (`cost_cache.json` and so on), and each
-   `.cost_ledger_<source>.json` to `nutshell/state/ledger_<source>.json`.
-   Delete the old lock files (`.cost_cache.lock`, `.auth_cache.json.lock`,
-   `.statusline-sync.lock`); they hold nothing.
-4. For each of `statusline.sh`, `statusline-toggle.sh` and
-   `cost_cache_refresh.sh`: if it is missing from `~/.claude/nutshell/bin/`,
-   or differs from the bundled copy, copy the bundled copy there and
-   `chmod +x` it. Do not write a `.bak`: nothing in this plugin creates
-   backup files. Once all three are in place, delete any pre-0.3.1 copies
-   still sitting at `~/.claude/statusline.sh`,
-   `~/.claude/statusline-toggle.sh` and `~/.claude/cost_cache_refresh.sh`.
-   Not before: if a copy failed, those old files are still the working
-   install.
-5. Then, unless `~/.claude/nutshell/config.json` has `"disabled": true`
-   (the user handed the row back to Claude Code with the nutshell-inactive skill),
-   make sure `~/.claude/settings.json` carries
-   `"statusLine": {"type": "command", "command": "bash ~/.claude/nutshell/bin/statusline.sh", "refreshInterval": 1}`.
-   If the key is absent, or present but different, add or update it with
-   `jq`, writing through a same-directory temp file and a rename. Do not
-   back settings.json up. If the file exists but is not a JSON object,
-   leave it untouched and skip registration rather than repairing it, and
-   say so in the report. All three keys are required: without
-   `refreshInterval` the status line only re-runs on assistant messages and a
-   few UI events, so disk-sourced segments (advisor, cost, session) stay stale
-   while the session is idle. A `statusLine` pointing at
-   `~/.claude/statusline.sh` is a pre-0.3.1 registration of ours and should be
-   replaced; one pointing anywhere else belongs to something else, so leave it
-   and report that instead.
-6. Never touch `config.json` or anything under `state/`.
-7. Report one line: what was copied or migrated and whether the registration
-   changed, or "already up to date" when nothing needed doing.
+1. Run the same script the hook runs:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/hooks/sync.sh"
+   ```
+
+   If that path does not resolve, the plugin root is two directories above
+   this SKILL.md, so run `bash "${CLAUDE_SKILL_DIR}/../../hooks/sync.sh"`.
+
+   The script is idempotent, silent, and always exits 0. It creates the
+   directories, migrates a pre-0.3.1 install (moves the config, state files
+   and extra ledgers from `~/.claude/` into `nutshell/`, deletes the old
+   lock files, and deletes the old scripts only once every new file is in
+   place), copies each of the five files into `bin/` when it is missing or
+   differs from the bundled copy, and registers
+   `"statusLine": {"type": "command", "command": "bash ~/.claude/nutshell/bin/statusline.sh", "refreshInterval": 1}`
+   in `~/.claude/settings.json`. It skips the registration when
+   `config.json` says `"disabled": true` (the user made the status line
+   inactive on purpose), when `settings.json` registers a status line that
+   is not ours, or when `settings.json` is not a JSON object. It never
+   touches `config.json` or anything under `state/`, and never writes a
+   `.bak`.
+
+2. Check the result yourself, since the script reports nothing:
+
+   - `ls ~/.claude/nutshell/bin/` must list all five files.
+   - `jq -r '.statusLine.command // "none"' ~/.claude/settings.json` must
+     print `bash ~/.claude/nutshell/bin/statusline.sh`, with three
+     exceptions to report rather than fix: `config.json` has
+     `"disabled": true` (leave it; the nutshell-active skill is the way
+     back), the command points at a different script (someone else's status
+     line; do not replace it), or `settings.json` is not a JSON object
+     (the script leaves it alone until it is valid again).
+
+3. Report one line: what was installed or migrated and whether the
+   registration is in place, or "already up to date" when nothing needed
+   doing. Never hand-edit `settings.json` or `config.json`.

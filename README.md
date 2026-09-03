@@ -67,6 +67,12 @@ asked of you, with one exception. If another tool of yours writes an extra
 cost ledger, that file is moved from `~/.claude/.cost_ledger_<source>.json`
 to `~/.claude/nutshell/state/ledger_<source>.json`, and only the new path is
 read from then on, so repoint the tool or its spend stops counting.
+The same version also restructured the installed scripts: a shared
+`nutshell-lib.sh` (paths, the registration, atomic writes) and a separate
+`auth_cache_refresh.sh` (the background `claude auth status` probe, which
+used to live inside `statusline.sh`) join the three files you had, all
+under `~/.claude/nutshell/bin/`. Nothing changes in what the status line
+shows.
 
 The marketplace is the only supported install. An `npx skills add` install
 was supported through 0.3.0 and is discontinued; if you have one, run
@@ -135,9 +141,10 @@ one.
   the skill asks for confirmation first because there is no undo.
 - `/nutshell:nutshell-setup` installs or repairs the scripts and the
   `statusLine` registration. It is also the fix when something looks wrong:
-  it re-copies any script that differs from the bundled one and restores the
-  registration. The `SessionStart` hook already does this at every session
-  start, so this is the mid-session repair, not something you normally run.
+  it runs the same sync script as the `SessionStart` hook, which re-copies
+  any file that differs from the bundled one and restores the registration.
+  The hook already does this at every session start, so this is the
+  mid-session repair, not something you normally run.
 - `/nutshell:nutshell-uninstall` removes the status line and the installed
   scripts. See the Uninstall section below.
 
@@ -158,17 +165,21 @@ single `nutshell/` entry rather than thirteen loose files:
 
 ```
 ~/.claude/nutshell/
-  bin/     statusline.sh  statusline-toggle.sh  cost_cache_refresh.sh
+  bin/     nutshell-lib.sh  statusline.sh  statusline-toggle.sh
+           cost_cache_refresh.sh  auth_cache_refresh.sh
   config.json
   state/   cost_cache.json  cost_ledger.json  cost_baseline.json
            rate_cache.json  auth_cache.json  ledger_<source>.json
   locks/   sync.lock  cost_cache.lock  auth_cache.lock
 ```
 
-- The three scripts are copied to `~/.claude/nutshell/bin/`. If one is
-  already there and differs from the bundled version, it is overwritten.
-  Nothing here writes a `.bak`, so a local edit to one of those three scripts
-  is lost at the next sync; keep your copy elsewhere.
+- The five files are copied to `~/.claude/nutshell/bin/`: a shared library
+  the other four source, the status line itself, the toggle script behind
+  every command, and the two background refreshers (cost via `ccusage`,
+  auth via `claude auth status`). If one is already there and differs from
+  the bundled version, it is overwritten. Nothing here writes a `.bak`, so a
+  local edit to one of those files is lost at the next sync; keep your copy
+  elsewhere.
 - The status line is registered under the `statusLine` key in
   `~/.claude/settings.json`, with `refreshInterval: 1`. Only that one key
   is touched, through a temp file and a rename. If `settings.json` is not
@@ -193,8 +204,8 @@ single `nutshell/` entry rather than thirteen loose files:
   missing or unreadable ledger falls back to a full scan.
 - Your own state is never touched by the sync step: `config.json` and
   everything under `state/`. Only the toggle script writes the config, only
-  the cost refresher writes the cost files, and only the status line itself
-  writes the rate and auth caches.
+  the cost refresher writes the cost files, only the status line itself
+  writes the rate cache, and only the auth probe writes the auth cache.
 - Other tools can feed the cost windows. Any `~/.claude/nutshell/state/ledger_<source>.json`
   holding `{"YYYY-MM-DD": cost}` is added, day by day, to what `ccusage`
   reports before today, week, month and all-time are summed, and
@@ -203,7 +214,7 @@ single `nutshell/` entry rather than thirteen loose files:
   keys with numeric values count. Meant for spend `ccusage` cannot see, for
   example a local OpenRouter proxy recording the credits it was actually
   charged.
-- `.rate_cache.json` is shared between your subscription sessions. Claude
+- `state/rate_cache.json` is shared between your subscription sessions. Claude
   Code only refreshes a session's rate-limit numbers when that session gets
   an API response, so an idle tab would otherwise show a reading from hours
   ago. Each session publishes the freshest numbers it has seen and displays
@@ -212,8 +223,8 @@ single `nutshell/` entry rather than thirteen loose files:
 - The rate row follows your plan. Pro and Max show both the 5-hour and the
   weekly window, a Team seat with only a 5-hour limit shows just that one,
   and API-key, Bedrock, Vertex and Foundry billing get no rate row at all.
-  A background `claude auth status` probe, cached in `.auth_cache.json` and
-  refreshed every 5 minutes, tells the two apart, and the windows your plan
+  A background `claude auth status` probe, cached in `state/auth_cache.json`
+  and refreshed every 5 minutes, tells the two apart, and the windows your plan
   has are learned from the ones actually seen. A real reading always wins.
 - That probe is answered per session, not per machine, because auth is
   whatever a session was launched with. Run a Max session and an API-key or
