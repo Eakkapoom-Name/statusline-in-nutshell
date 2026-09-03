@@ -445,11 +445,20 @@ case "$cmd" in
       # Unquoted on purpose so it expands; with no match the literal pattern
       # reaches rm -f, which ignores a path that does not exist.
       rm -f "$HOME/.claude/.cost_ledger_"*.json
+      # Backups left by versions before 0.3.1, which is when this plugin
+      # stopped writing any. Nothing else ever cleaned them up, so an old
+      # install carries up to four orphans forever. Exact names, never a
+      # glob: settings.json.bak in particular may hold a user's only copy
+      # of their pre-install settings, so only an explicit --purge takes it.
+      rm -f "$HOME/.claude/statusline.sh.bak" \
+            "$HOME/.claude/statusline-toggle.sh.bak" \
+            "$HOME/.claude/cost_cache_refresh.sh.bak" \
+            "$HOME/.claude/settings.json.bak"
     fi
     if [ "$purge" = true ]; then
-      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh, and purged config/cost/lock files."
+      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh, and purged config/cost/lock files plus any .bak files left by versions before 0.3.1."
     else
-      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh. Config, cost history, rate cache and auth cache were kept."
+      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh. Config, cost history, rate cache, auth cache and any .bak files from versions before 0.3.1 were kept."
     fi
     rm -f "$HOME/.claude/statusline-toggle.sh"
     exit 0

@@ -25,7 +25,8 @@ an explicit request to wipe config and cost history, as the purge variant.
    Proceed?" For the purge variant, ask instead: "This removes the status
    line registration, deletes the installed scripts from ~/.claude/, and
    also wipes your toggle config and cost history, including any cost
-   ledgers written by other tools. Proceed?" Wait for an
+   ledgers written by other tools and any .bak files left by versions
+   before 0.3.1. Proceed?" Wait for an
    answer and reply with exactly "Done." or "Abort." and nothing else.
 3. Only after yes, run one of:
 

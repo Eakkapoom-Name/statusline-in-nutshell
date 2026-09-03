@@ -213,8 +213,13 @@ session.
 By default the uninstall keeps `statusline.config.json`, your cost history,
 the rate-limit cache and the auth cache. Ask for a purge, or pass `--purge`,
 to wipe those too, including any `.cost_ledger_<source>.json` written by
-another tool. Only the `statusLine` key is removed from `settings.json`; the
+another tool and the four `.bak` files that versions before 0.3.1 left in
+`~/.claude/`. Only the `statusLine` key is removed from `settings.json`; the
 rest of the file is left alone.
+
+A non-purge uninstall keeps those `.bak` files on purpose:
+`settings.json.bak` may be your only copy of the settings you had before
+installing. Nothing writes a new one, so once they are gone they stay gone.
 
 If you would rather not go through the skill, the manual fallback is:
 
