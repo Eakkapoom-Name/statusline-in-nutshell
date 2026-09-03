@@ -9,7 +9,7 @@ never have to edit JSON by hand.
 
 ```
 model: Sonnet 5 (high) | advisor: Opus 5 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
-session: 1.24$ | today: 3.87$ | week: 12.50$ | month: 41.02$ | all-time: 210.33$
+current session: 1.24$ | today: 3.87$ | week: 12.50$ | month: 41.02$ | all-time: 210.33$
 5 hours session: 42% used (resets 6:19am) | weekly session: 18% used (resets Jul 27, 6:00pm)
 workspace: ~/Documents/statusline-in-nutshell | repo: Eakkapoom-Name/statusline-in-nutshell | branch: main
 ```
@@ -44,77 +44,92 @@ Add the marketplace:
 Then install the plugin:
 
 ```bash
-/plugin install nutshell-statusline@statusline-in-nutshell
+/plugin install nutshell@statusline-in-nutshell
 ```
 
 Restart your session. The hook copies the scripts into `~/.claude/` and
 registers the status line in the background. There is nothing else to do;
 the status line simply appears.
 
-**npx (no marketplace).** This path installs the skill directly and gives
-you the shorter command `/nutshell` instead of
-`/nutshell-statusline:nutshell`.
+If you installed an earlier version, the plugin was called
+`nutshell-statusline`. Version 0.3.0 renamed it to `nutshell` so the
+commands read `/nutshell:nutshell-hide` rather than
+`/nutshell-statusline:...`. Remove the old one from the `/plugin` menu
+first, then install `nutshell@statusline-in-nutshell`. Your installed
+scripts, toggle settings and cost history are untouched by the swap.
+
+**npx (no marketplace).** This path installs the skills directly and gives
+you flat commands such as `/nutshell-show`, `/nutshell-hide cost` and
+`/nutshell-status` instead of `/nutshell:nutshell-show`.
 
 ```bash
 npx skills add Eakkapoom-Name/statusline-in-nutshell --agent claude-code
 ```
 
-There is no background hook on this path, so syncing only happens when you
-invoke the skill. The first run installs everything. After that, an update
-to this repository will not reach your machine until you run `/nutshell`
-again, because that is what triggers the sync check. If you want updates to
-land automatically, use the marketplace install instead.
+There is no background hook on this path. The first command you run installs
+everything, because every skill checks for the scripts and calls
+`/nutshell-setup` when they are missing. After that, an update to this
+repository will not reach your machine until you run `/nutshell-setup` again.
+If you want updates to land automatically, use the marketplace install
+instead.
 
 ## Usage
 
-Type the slash command followed by what you want, or just say it in plain
-language: "hide the cost line", "show everything", "turn on emoji", "what's
-showing?". If you installed with npx, drop the `nutshell-statusline:`
-prefix, for example `/nutshell hide cost`.
+Type the command for what you want, or just describe it in plain language:
+"hide the cost line", "show everything", "turn on emoji", "what's showing?".
+Each command has its own description, so a plain request lands on the right
+one. If you installed with npx, drop the `nutshell:` prefix, for example
+`/nutshell-hide cost`.
 
-- `/nutshell-statusline:nutshell show` turns all four lines on.
-- `/nutshell-statusline:nutshell hide` turns all four lines off. This leaves
-  the status line blank, so the skill asks you to confirm first.
-- `/nutshell-statusline:nutshell show model` turns the model line on
-  without touching the others. The same works for `cost`, `rate` and
-  `workspace`.
-- `/nutshell-statusline:nutshell hide cost` turns the cost line off without
-  touching the others.
-- `/nutshell-statusline:nutshell hide rate` turns the rate-limit line off.
-- `/nutshell-statusline:nutshell hide workspace` turns the location line
-  off. That line shows the current directory (with your home folder
-  shortened to `~`), the repository parsed from the `origin` remote, and the
-  branch read straight from `.git/HEAD`. Each part is independent, so a
-  folder outside any repository still shows its path. If none of the three
-  resolve, the line is left out rather than printed empty.
-- `/nutshell-statusline:nutshell cost` toggles the cost line: naming a line
-  with no on/off word flips whatever state it is currently in. The same
-  works for `model`, `rate` and `workspace`.
-- `/nutshell-statusline:nutshell emoji` toggles emoji mode. It is
-  independent of which lines are shown, and it is off by default.
-- `/nutshell-statusline:nutshell emoji on` switches to icons.
-- `/nutshell-statusline:nutshell emoji off` switches back to text labels.
-- `/nutshell-statusline:nutshell off` hands the row back to Claude Code. It
-  removes the `statusLine` registration from `settings.json`, so Claude
-  Code shows its own footer again, including the keyboard hints it hides
-  while a custom status line is active. This is not the same as `hide`,
-  which keeps the registration and prints a blank row. The choice is
-  remembered, so the sync hook will not put the status line back at the
-  next session start.
-- `/nutshell-statusline:nutshell on` takes the row back, with your line
-  settings intact. Neither `on` nor `off` touches a status line this plugin
-  did not install: if `settings.json` registers something else, for example
-  one written by Claude Code's own `/statusline`, `off` refuses to delete it
-  and `on` refuses to overwrite it. Use `on --force` to take over
-  deliberately. `settings.json` is backed up before either change.
-- `/nutshell-statusline:nutshell status` prints the current on/off state of
-  the status line itself and of model, cost, rate, workspace and emoji.
-- `/nutshell-statusline:nutshell reset-all-time-cost` wipes the all-time
-  cost counter for good. Today, week and month are untouched. This needs
-  `ccusage`, and the skill asks for confirmation first because there is no
-  undo.
-- `/nutshell-statusline:nutshell uninstall` removes the status line and the
-  installed scripts. See the Uninstall section below.
+- `/nutshell:nutshell-show` turns all four lines on. `show all` does the
+  same.
+- `/nutshell:nutshell-hide` turns all four lines off, as does `hide all`.
+  This leaves the status line blank, so the skill asks you to confirm first.
+- `/nutshell:nutshell-show model` turns the model line on without touching
+  the others. The same works for `cost`, `session` and `workspace`.
+- `/nutshell:nutshell-hide cost` turns the cost line off without touching
+  the others.
+- `/nutshell:nutshell-hide session` turns the rate-limit line off. It is
+  called `session` because it tracks your 5-hour and weekly session limits.
+- `/nutshell:nutshell-hide workspace` turns the location line off. That line
+  shows the current directory (with your home folder shortened to `~`), the
+  repository parsed from the `origin` remote, and the branch read straight
+  from `.git/HEAD`. Each part is independent, so a folder outside any
+  repository still shows its path. If none of the three resolve, the line is
+  left out rather than printed empty.
+- `/nutshell:nutshell-emoji` toggles emoji mode. It is independent of which
+  lines are shown, it is off by default, and this is the only command that
+  changes it: `show` and `hide` do not take `emoji`.
+- `/nutshell:nutshell-emoji on` switches to icons.
+- `/nutshell:nutshell-emoji off` switches back to text labels.
+- `/nutshell:nutshell-inactive` hands the row back to Claude Code. It removes
+  the `statusLine` registration from `settings.json`, so Claude Code shows
+  its own footer again, including the keyboard hints it hides while a custom
+  status line is active. This is not the same as hiding every line, which
+  keeps the registration and prints a blank row. The choice is remembered,
+  so the sync hook will not put the status line back at the next session
+  start. While inactive, `show`, `hide`, `emoji` and `reset-all-time-cost`
+  refuse to run, since nothing they change would be visible; `status`,
+  `active` and `uninstall` still work.
+- `/nutshell:nutshell-active` takes the row back, with your line settings
+  intact. Neither of these touches a status line this plugin did not
+  install: if `settings.json` registers something else, for example one
+  written by Claude Code's own `/statusline`, `nutshell-inactive` refuses to
+  delete it and `nutshell-active` refuses to overwrite it. Use
+  `/nutshell:nutshell-active --force` to take over deliberately.
+  `settings.json` is backed up before either change.
+- `/nutshell:nutshell-status` prints the current on/off state of the status
+  line itself and of model, cost, session, workspace and emoji.
+- `/nutshell:nutshell-reset-all-time-cost` wipes the all-time cost counter
+  for good. Today, week and month are untouched. This needs `ccusage`, and
+  the skill asks for confirmation first because there is no undo.
+- `/nutshell:nutshell-setup` installs or repairs the scripts and the
+  `statusLine` registration. It is also the fix when something looks wrong:
+  it re-copies any script that differs from the bundled one and restores the
+  registration. On the marketplace path the hook already does this at every
+  session start; on the npx path it is what picks up an update.
+- `/nutshell:nutshell-uninstall` removes the status line and the installed
+  scripts. See the Uninstall section below.
 
 ## Requirements
 
@@ -124,7 +139,7 @@ prefix, for example `/nutshell hide cost`.
 - `ccusage`, optional. Session cost still shows without it, because that
   figure comes straight from Claude Code's own status line payload. With it,
   a background job also fills in today, week, month and all-time cost, and
-  `reset-all-time-cost` becomes available.
+  `nutshell-reset-all-time-cost` becomes available.
 
 ## What gets written where
 
@@ -151,7 +166,7 @@ prefix, for example `/nutshell hide cost`.
 - Other tools can feed the cost windows. Any `~/.claude/.cost_ledger_<source>.json`
   holding `{"YYYY-MM-DD": cost}` is added, day by day, to what `ccusage`
   reports before today, week, month and all-time are summed, and
-  `reset-all-time-cost` resets that spend too. The refresher only reads these
+  `nutshell-reset-all-time-cost` resets that spend too. The refresher only reads these
   files: one that is not a JSON object is skipped, and inside one only date
   keys with numeric values count. Meant for spend `ccusage` cannot see, for
   example a local OpenRouter proxy recording the credits it was actually
@@ -191,19 +206,18 @@ prefix, for example `/nutshell hide cost`.
 
 ## Uninstall
 
-Run the skill and ask it to uninstall, with `/nutshell uninstall` or
-`/nutshell-statusline:nutshell uninstall` for the marketplace install. It
-confirms first, then cleans up.
+Run `/nutshell:nutshell-uninstall`, or `/nutshell-uninstall` on the npx install.
+It confirms first, then cleans up.
 
-If you installed from the marketplace, remove the plugin from the `/plugin`
-menu first. Otherwise its `SessionStart` hook reinstalls the scripts at the
-next session.
+If you installed from the marketplace, remove the `nutshell` plugin from the
+`/plugin` menu first. Otherwise its `SessionStart` hook reinstalls the
+scripts at the next session.
 
-If you installed with npx, run the uninstall first, then remove the skill
-itself:
+If you installed with npx, run the uninstall first, then remove the skills
+themselves:
 
 ```bash
-npx skills remove nutshell
+npx skills remove nutshell-setup nutshell-status nutshell-show nutshell-hide nutshell-emoji nutshell-active nutshell-inactive nutshell-reset-all-time-cost nutshell-uninstall
 ```
 
 By default the uninstall keeps `statusline.config.json`, your cost history,
