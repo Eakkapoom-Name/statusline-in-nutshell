@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# statusline-toggle.sh — show/hide the three status-line sections, and toggle emoji labels.
+# statusline-toggle.sh: show/hide the three status-line sections, and toggle emoji labels.
 #
 # The status line (statusline.sh) is divided into three parts:
-#   model  — model name / advisor / context bar               (line 1)
+#   model  : model name / advisor / context bar               (line 1)
 #            ALWAYS ON. It cannot be hidden, and `all` skips it, so line 1
 #            always renders and the row never collapses to nothing.
-#   cost   — current session / today / week / month / all-time spend (line 2)
-#   session — usage limits: current 5-hour window + current week (line 3)
+#   cost   : current session / today / week / month / all-time spend (line 2)
+#   session: usage limits, current 5-hour window + current week (line 3)
 #
 # Independently of those, "emoji" swaps text labels ("model:", "current session:", ...)
-# for icons everywhere. Default OFF (fail-closed) — unlike model/cost/session,
+# for icons everywhere. Default OFF (fail-closed), unlike model/cost/session,
 # which fail open (missing key = shown), a missing/bad emoji key must not
 # silently switch the status line to icons the user didn't ask for.
 #
@@ -23,8 +23,14 @@
 
 set -euo pipefail
 
-CONFIG="$HOME/.claude/statusline.config.json"
-REFRESH="$HOME/.claude/cost_cache_refresh.sh"
+# One directory for everything this plugin owns (0.3.1); see statusline.sh.
+NUT_DIR="$HOME/.claude/nutshell"
+CONFIG="$NUT_DIR/config.json"
+REFRESH="$NUT_DIR/bin/cost_cache_refresh.sh"
+
+# ensure_config below writes config.json through a same-directory temp file,
+# which needs the directory to exist. See the same guard in statusline.sh.
+[ -d "$NUT_DIR" ] || mkdir -p "$NUT_DIR" 2>/dev/null
 PARTS=(model cost session workspace)
 # The parts `all` acts on, and the only ones that accept on/off/toggle.
 # model is absent on purpose: pinning it on is what stops `all off` from
@@ -37,7 +43,7 @@ SETTINGS_FILE="$HOME/.claude/settings.json"
 # the setup skill, and this script can each be the one that registers the
 # status line; if they disagree they rewrite each other on every session
 # start.
-STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/statusline.sh","refreshInterval":1}'
+STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/nutshell/bin/statusline.sh","refreshInterval":1}'
 
 
 usage() {
@@ -97,6 +103,10 @@ statusline_is_ours() {
   cmd=$(jq -r '.statusLine.command // empty' "$SETTINGS_FILE" 2>/dev/null)
   [ -z "$cmd" ] && return 0
   case "$cmd" in
+    *'/.claude/nutshell/bin/statusline.sh'*) return 0 ;;
+    # Pre-0.3.1 installs registered the script at ~/.claude/statusline.sh.
+    # Still ours, and it has to be recognised as ours or `on`, `off` and
+    # `uninstall` would all refuse to touch an install that predates the move.
     *'/.claude/statusline.sh'*) return 0 ;;
     *) return 1 ;;
   esac
@@ -185,7 +195,7 @@ ensure_config() {
 }
 
 # Read a part's current value ("true"/"false"); missing key defaults to true.
-# Don't use `.key // true` — jq's // treats a literal `false` as empty and would
+# Don't use `.key // true`: jq's // treats a literal `false` as empty and would
 # wrongly return true, so read the raw value and only "false" counts as off.
 # Duplicated in statusline.sh (no shared lib file); keep both in sync.
 get_part() {
@@ -203,14 +213,14 @@ set_part() {
 }
 
 # Read emoji's current value ("true"/"false"); missing/bad key defaults to
-# false (fail-closed — opposite of get_part's fail-open default).
+# false (fail-closed, the opposite of get_part's fail-open default).
 get_emoji() {
   local v
   v="$(jq -r '.emoji' "$CONFIG" 2>/dev/null)"
   [ "$v" = "true" ] && echo true || echo false
 }
 
-# Full box-drawn table — only for the explicit "status" command.
+# Full box-drawn table, only for the explicit "status" command.
 print_status() {
   local p state names=(Part status-line model cost session workspace emoji) states=(Status) name_w=0 state_w=0
   local top sep bot i
@@ -241,7 +251,7 @@ print_status() {
   printf '%s\n' "$bot"
 }
 
-# One-line confirmation — used by the toggle actions instead of the full table.
+# One-line confirmation, used by the toggle actions instead of the full table.
 print_one() {
   printf '%s: %s\n' "$1" "$2"
 }
@@ -270,13 +280,20 @@ case "$cmd" in
       echo "that is what you want." >&2
       exit 1
     fi
-    if is_disabled; then
+    # Both halves must already be off to pass, mirroring the `on` branch.
+    # The flag alone is not enough: a config that says disabled while
+    # settings.json still registers our command is the one state that
+    # renders nothing AND keeps Claude Code's footer hints suppressed,
+    # since statusline.sh exits on the flag while the key keeps the row
+    # reserved. Falling through deletes the stray key instead of reporting
+    # a state we are not actually in.
+    if is_disabled && ! jq -e '.statusLine' "$SETTINGS_FILE" >/dev/null 2>&1; then
       echo "status line: already off (Claude Code's own footer is showing)"
       exit 0
     fi
     if set_statusline_key off; then
       set_flag disabled true
-      echo "status line: off — Claude Code's default footer is back. Your part"
+      echo "status line: off. Claude Code's default footer is back. Your part"
       echo "settings are kept; run 'statusline-toggle.sh on' to restore this one."
     else
       echo "statusline-toggle: could not update settings.json, status line left on" >&2
@@ -298,7 +315,7 @@ case "$cmd" in
     fi
     if set_statusline_key on; then
       set_flag disabled false
-      echo "status line: on — restored with your saved part settings."
+      echo "status line: on, restored with your saved part settings."
     else
       echo "statusline-toggle: could not update settings.json, status line left off" >&2
       exit 1
@@ -385,7 +402,7 @@ case "$cmd" in
       echo "statusline-toggle: reset failed or timed out" >&2
       exit 1
     fi
-    echo "done — all-time cost is now 0; today / week / month are unchanged."
+    echo "done: all-time cost is now 0; today / week / month are unchanged."
     ;;
   uninstall)
     yes=false
@@ -399,8 +416,8 @@ case "$cmd" in
     if [ "$yes" != true ]; then
       echo "statusline-toggle: 'uninstall' removes the status line registration from settings.json" >&2
       echo "and deletes the installed scripts (statusline.sh, statusline-toggle.sh," >&2
-      echo "cost_cache_refresh.sh) from ~/.claude/. Your toggle config, cost history and rate" >&2
-      echo "cache are kept" >&2
+      echo "cost_cache_refresh.sh) from ~/.claude/nutshell/bin/. Your toggle config, cost" >&2
+      echo "history and rate cache are kept" >&2
       echo "unless --purge is also given. Re-run to confirm:" >&2
       echo "  statusline-toggle.sh uninstall --yes [--purge]" >&2
       exit 1
@@ -428,10 +445,34 @@ case "$cmd" in
     # The sync lock holds no user data, so it goes in both paths. Leaving it
     # behind on a non-purge uninstall left a file the "kept files" message
     # never mentioned.
-    rm -f "$HOME/.claude/.statusline-sync.lock"
-    rm -f "$HOME/.claude/statusline.sh" "$REFRESH"
+    # Locks hold no user data, so all three go in both paths. Leaving one
+    # behind on a non-purge uninstall leaves a file the "kept files" message
+    # never mentions.
+    rm -f "$NUT_DIR/locks/sync.lock" \
+          "$NUT_DIR/locks/cost_cache.lock" \
+          "$NUT_DIR/locks/auth_cache.lock"
+    rm -f "$NUT_DIR/bin/statusline.sh" "$REFRESH"
+    # Files a pre-0.3.1 install left directly in ~/.claude. Exact names only,
+    # never a glob, and only the ones this plugin is known to have written.
+    rm -f "$HOME/.claude/statusline.sh" \
+          "$HOME/.claude/cost_cache_refresh.sh" \
+          "$HOME/.claude/.statusline-sync.lock"
     if [ "$purge" = true ]; then
       rm -f "$CONFIG" \
+            "$NUT_DIR/state/cost_cache.json" \
+            "$NUT_DIR/state/cost_ledger.json" \
+            "$NUT_DIR/state/cost_baseline.json" \
+            "$NUT_DIR/state/rate_cache.json" \
+            "$NUT_DIR/state/auth_cache.json"
+      # Extra per-source ledgers (state/ledger_<source>.json), written by
+      # other tools and folded into the cost windows by the refresher. A
+      # glob, not a fixed path, since the source names are not ours to know.
+      # Unquoted on purpose so it expands; with no match the literal pattern
+      # reaches rm -f, which ignores a path that does not exist.
+      rm -f "$NUT_DIR/state/ledger_"*.json
+      # And the pre-0.3.1 equivalents of all of the above, for an install that
+      # was never migrated (or that kept writing to the old paths).
+      rm -f "$HOME/.claude/statusline.config.json" \
             "$HOME/.claude/.cost_cache.json" \
             "$HOME/.claude/.cost_ledger.json" \
             "$HOME/.claude/.cost_baseline.json" \
@@ -439,11 +480,6 @@ case "$cmd" in
             "$HOME/.claude/.rate_cache.json" \
             "$HOME/.claude/.auth_cache.json" \
             "$HOME/.claude/.auth_cache.json.lock"
-      # Extra per-source ledgers (.cost_ledger_<source>.json), written by
-      # other tools and folded into the cost windows by the refresher. A
-      # glob, not a fixed path, since the source names are not ours to know.
-      # Unquoted on purpose so it expands; with no match the literal pattern
-      # reaches rm -f, which ignores a path that does not exist.
       rm -f "$HOME/.claude/.cost_ledger_"*.json
       # Backups left by versions before 0.3.1, which is when this plugin
       # stopped writing any. Nothing else ever cleaned them up, so an old
@@ -460,7 +496,13 @@ case "$cmd" in
     else
       echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh. Config, cost history, rate cache, auth cache and any .bak files from versions before 0.3.1 were kept."
     fi
-    rm -f "$HOME/.claude/statusline-toggle.sh"
+    rm -f "$NUT_DIR/bin/statusline-toggle.sh" "$HOME/.claude/statusline-toggle.sh"
+    # Drop the directory itself once its contents are gone. rmdir, never
+    # `rm -r`: it removes bin/, state/, locks/ and nutshell/ only while they
+    # are empty, so anything unexpected in there (a file a future version
+    # writes, something the user put there) survives instead of being deleted
+    # by a recursive sweep this script cannot audit.
+    rmdir "$NUT_DIR/bin" "$NUT_DIR/state" "$NUT_DIR/locks" "$NUT_DIR" 2>/dev/null
     exit 0
     ;;
   "")

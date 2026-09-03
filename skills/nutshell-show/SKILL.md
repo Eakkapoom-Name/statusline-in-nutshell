@@ -6,11 +6,11 @@ argument-hint: "[all|cost|session|workspace]"
 
 # Show a status line part
 
-If `~/.claude/statusline-toggle.sh` does not exist, invoke the setup skill
+If `~/.claude/nutshell/bin/statusline-toggle.sh` does not exist, invoke the setup skill
 with the Skill tool first (`nutshell:nutshell-setup` if that name is listed,
 otherwise `nutshell-setup`), then continue.
 
-Then run `bash ~/.claude/statusline-toggle.sh status`. If the `status-line`
+Then run `bash ~/.claude/nutshell/bin/statusline-toggle.sh status`. If the `status-line`
 row reads `off`, the status line is inactive: say so, tell the user to run
 the nutshell-active skill first, and stop. The script refuses this command
 while inactive anyway; checking first avoids asking a question that cannot
@@ -21,8 +21,8 @@ Argument: $0
 If that line above is blank, or still shows the unreplaced placeholder (a
 dollar sign followed by a zero), there is no argument.
 
-- No argument, or `all`: `bash ~/.claude/statusline-toggle.sh all on`
-- `cost`, `session` or `workspace`: `bash ~/.claude/statusline-toggle.sh <part> on`
+- No argument, or `all`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh all on`
+- `cost`, `session` or `workspace`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh <part> on`
 - `model`: already on and cannot be turned off. Say so, and do not run the
   script.
 - `emoji`: not handled here. Tell the user to use the nutshell-emoji skill.

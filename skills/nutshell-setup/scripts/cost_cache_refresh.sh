@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Refreshes ~/.claude/.cost_cache.json with today / this-week (Sun-Sat) /
+# Refreshes ~/.claude/nutshell/state/cost_cache.json with today / this-week (Sun-Sat) /
 # this-month / all-time spend: what ccusage reports plus any extra ledgers.
 #
 # Cost is sourced from `ccusage daily --json` (which scans local transcript logs),
-# but ccusage only sees logs that STILL EXIST — Claude Code prunes old transcript
+# but ccusage only sees logs that STILL EXIST: Claude Code prunes old transcript
 # logs on a rolling (~monthly) window, so a day's cost silently disappears from
 # ccusage once its log file is deleted. To stop month/all-time from shrinking as
 # that happens, we merge ccusage into a PERSISTENT per-day ledger
-# (~/.claude/.cost_ledger.json) using max-per-day: a day's recorded cost can only
+# (~/.claude/nutshell/state/cost_ledger.json) using max-per-day: a day's recorded cost can only
 # ever go up, never vanish. All four windows are then summed from the ledger, so
 # they still roll over on the real calendar (midnight, Sunday, the 1st) but never
 # lose history to log pruning.
@@ -16,9 +16,12 @@
 # ccusage had already lost before the ledger existed cannot be recovered.
 #
 # Other tools can contribute spend of their own through extra ledgers,
-# ~/.claude/.cost_ledger_<source>.json, in the same {"YYYY-MM-DD": cost} shape
-# (a local OpenRouter proxy, say, recording the credits it was actually
-# charged). Their per-day values are added to the ccusage ledger's before the
+# ~/.claude/nutshell/state/ledger_<source>.json, in the same
+# {"YYYY-MM-DD": cost} shape (the path before 0.3.1 was
+# ~/.claude/.cost_ledger_<source>.json, and it is no longer read: a tool
+# writing there must be repointed at the new one). A local OpenRouter proxy
+# recording the credits it was actually charged is one such source. Their
+# per-day values are added to the ccusage ledger's before the
 # windows are summed. This script never writes them: each source owns its file,
 # and each is expected to be monotonic per day (only ever adding), which is what
 # lets the all-time baseline below treat the combined totals like the ledger.
@@ -32,10 +35,21 @@
 LC_ALL=C
 export LC_ALL
 
-CACHE_FILE="$HOME/.claude/.cost_cache.json"
-LEDGER_FILE="$HOME/.claude/.cost_ledger.json"
-BASELINE_FILE="$HOME/.claude/.cost_baseline.json"
-LOCK_FILE="$HOME/.claude/.cost_cache.lock"
+# One directory for everything this plugin owns (0.3.1); see statusline.sh.
+NUT_DIR="$HOME/.claude/nutshell"
+CACHE_FILE="$NUT_DIR/state/cost_cache.json"
+LEDGER_FILE="$NUT_DIR/state/cost_ledger.json"
+BASELINE_FILE="$NUT_DIR/state/cost_baseline.json"
+LOCK_FILE="$NUT_DIR/locks/cost_cache.lock"
+
+# Create our own directories rather than trusting the sync hook to have done
+# it. A missing locks/ is not a cosmetic problem: `exec 9>"$LOCK_FILE"` on a
+# path whose directory does not exist fails, and a failed redirection on
+# `exec` terminates the shell outright, so the whole refresh would die before
+# writing anything. Guarded by a test so the common case costs no process:
+# mkdir is not a builtin, and this runs on every render in statusline.sh.
+[ -d "$NUT_DIR/state" ] && [ -d "$NUT_DIR/locks" ] \
+  || mkdir -p "$NUT_DIR/state" "$NUT_DIR/locks" 2>/dev/null
 
 # Subtract N calendar days, GNU (-d) or BSD/macOS (-v). Calendar-day, not
 # epoch-seconds: N*86400 lands on the wrong date across a DST transition.
@@ -92,8 +106,6 @@ fi
 
 command -v ccusage >/dev/null 2>&1 || exit 0
 
-json=$(ccusage daily --json 2>/dev/null) || exit 0
-
 today=$(date +%Y-%m-%d)
 days_since_sunday=$(date +%w)  # 0=Sun ... 6=Sat (portable across GNU/BSD date)
 week_start=$(days_ago_date "$days_since_sunday")
@@ -108,11 +120,44 @@ month_prefix=$(date +%Y-%m)
 # Existing ledger, or an empty object if it's missing / unreadable / corrupt.
 ledger=$(jq -e . "$LEDGER_FILE" 2>/dev/null) || ledger='{}'
 
+# Scope the ccusage scan. A full `ccusage daily --json` re-reads every
+# transcript in ~/.claude/projects: measured 4.9s against 763 files / 447MB on
+# the author's machine, which is why this runs in the background at all and
+# why the cache it feeds is allowed to be minutes old. Almost all of that work
+# is re-deriving days that can no longer change.
+#
+# Only days from the ledger's newest entry onward can still move: earlier ones
+# are already recorded, and the merge below keeps a day the scan did not
+# return (it takes the max per day, and an absent day is simply not in
+# $ccusage_days). So a scan that starts at the ledger's last date is exactly
+# as correct as a full one, while costing about a third of the time. Starting
+# there rather than at today is what finalises the previous day after
+# midnight: the last scan before the rollover only ever saw a partial day.
+#
+# Full scan when there is no ledger to start from, and on --reset-all-time,
+# which freezes the whole per-day history as the baseline and therefore needs
+# all of it. A ledger date ahead of today (clock moved backwards) is clamped,
+# so a skewed stamp can never scope the scan into the future and skip today.
+since_compact=""
+if [ "$reset_all_time" -eq 0 ]; then
+  ledger_last=$(printf '%s' "$ledger" | jq -r '[keys[] | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))] | max // empty' 2>/dev/null)
+  if [ -n "$ledger_last" ]; then
+    [ "$ledger_last" \> "$today" ] && ledger_last="$today"
+    since_compact=$(printf '%s' "$ledger_last" | tr -d '-')
+  fi
+fi
+
+if [ -n "$since_compact" ]; then
+  json=$(ccusage daily --since "$since_compact" --json 2>/dev/null) || exit 0
+else
+  json=$(ccusage daily --json 2>/dev/null) || exit 0
+fi
+
 # ccusage's current per-day cost map: {"YYYY-MM-DD": cost, ...}
 ccusage_days=$(printf '%s' "$json" | jq '[.daily[]? | {(.period): .totalCost}] | add // {}')
 
 # Merge ccusage into the ledger, keeping the larger value for each day so a day's
-# cost never decreases — even when its transcript log gets pruned and ccusage
+# cost never decreases, even when its transcript log gets pruned and ccusage
 # stops reporting it (that day simply isn't in $ccusage_days, so the ledger's value
 # is kept as-is).
 merged=$(jq -n --argjson a "$ledger" --argjson b "$ccusage_days" '
@@ -132,7 +177,7 @@ safe_write_json "$ledger_out" "$LEDGER_FILE"
 # a foreign, half-written or corrupt file cannot poison the sums. The ccusage
 # ledger persisted above stays free of them.
 combined=$merged
-for extra_file in "$HOME/.claude/.cost_ledger_"*.json; do
+for extra_file in "$NUT_DIR/state/ledger_"*.json; do
   [ -f "$extra_file" ] || continue
   extra=$(jq -e 'select(type == "object")
     | with_entries(select((.key | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
@@ -151,8 +196,8 @@ fi
 
 # All-time counts only per-day spend ABOVE the baseline snapshot (no baseline file =>
 # the whole ledger, the default). Because the ledger is monotonic (max-per-day),
-# baselined days stay frozen and net to 0, while later spend — a higher value on a
-# baselined day, or a brand-new day absent from the baseline — counts in full. That
+# baselined days stay frozen and net to 0, while later spend (a higher value on a
+# baselined day, or a brand-new day absent from the baseline) counts in full. That
 # is what makes a reset stick even though every refresh re-merges ccusage's still-
 # visible days.
 baseline=$(jq -e . "$BASELINE_FILE" 2>/dev/null) || baseline='{}'

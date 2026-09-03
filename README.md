@@ -47,7 +47,7 @@ Then install the plugin:
 /plugin install nutshell@statusline-in-nutshell
 ```
 
-Restart your session. The hook copies the scripts into `~/.claude/` and
+Restart your session. The hook copies the scripts into `~/.claude/nutshell/bin/` and
 registers the status line in the background. There is nothing else to do;
 the status line simply appears.
 
@@ -57,6 +57,16 @@ commands read `/nutshell:nutshell-hide` rather than
 `/nutshell-statusline:...`. Remove the old one from the `/plugin` menu
 first, then install `nutshell@statusline-in-nutshell`. Your installed
 scripts, toggle settings and cost history are untouched by the swap.
+
+Version 0.3.1 moved everything this plugin installs into one directory,
+`~/.claude/nutshell/`, instead of thirteen loose files in `~/.claude/`. The
+move happens by itself at your next session start: the scripts, your toggle
+settings and your whole cost history are moved, not recreated, and the
+`statusLine` registration is repointed at the new script path. Nothing is
+asked of you, with one exception. If another tool of yours writes an extra
+cost ledger, that file is moved from `~/.claude/.cost_ledger_<source>.json`
+to `~/.claude/nutshell/state/ledger_<source>.json`, and only the new path is
+read from then on, so repoint the tool or its spend stops counting.
 
 The marketplace is the only supported install. An `npx skills add` install
 was supported through 0.3.0 and is discontinued; if you have one, run
@@ -101,9 +111,13 @@ one.
 - `/nutshell:nutshell-inactive` hands the row back to Claude Code. It removes
   the `statusLine` registration from `settings.json`, so Claude Code shows
   its own footer again, including the keyboard hints it hides while a custom
-  status line is active. This is not the same as hiding every line, which
-  prints nothing but keeps the registration, so those hints stay hidden and
-  the footer area is simply empty. The choice is remembered,
+  status line is active. This is not the same as hiding lines, which keeps
+  the registration, so those hints stay hidden and line 1 keeps rendering.
+  Going inactive also stops the work behind the row: `statusline.sh` exits
+  immediately while inactive, so it prints nothing and spawns neither the
+  background cost refresh nor the auth probe. That covers a session that was
+  already running when you turned it off, in case Claude Code keeps invoking
+  the old command until the session restarts. The choice is remembered,
   so the sync hook will not put the status line back at the next session
   start. While inactive, `show`, `hide`, `emoji` and `reset-all-time-cost`
   refuse to run, since nothing they change would be visible; `status`,
@@ -139,11 +153,22 @@ one.
 
 ## What gets written where
 
-- The three scripts (`statusline.sh`, `statusline-toggle.sh` and
-  `cost_cache_refresh.sh`) are copied to `~/.claude/`. If one is already
-  there and differs from the bundled version, it is overwritten. Nothing
-  here writes a `.bak`, so a local edit to one of those three scripts is
-  lost at the next sync; keep your copy elsewhere.
+Everything this plugin owns lives under one directory, so `~/.claude/` gains a
+single `nutshell/` entry rather than thirteen loose files:
+
+```
+~/.claude/nutshell/
+  bin/     statusline.sh  statusline-toggle.sh  cost_cache_refresh.sh
+  config.json
+  state/   cost_cache.json  cost_ledger.json  cost_baseline.json
+           rate_cache.json  auth_cache.json  ledger_<source>.json
+  locks/   sync.lock  cost_cache.lock  auth_cache.lock
+```
+
+- The three scripts are copied to `~/.claude/nutshell/bin/`. If one is
+  already there and differs from the bundled version, it is overwritten.
+  Nothing here writes a `.bak`, so a local edit to one of those three scripts
+  is lost at the next sync; keep your copy elsewhere.
 - The status line is registered under the `statusLine` key in
   `~/.claude/settings.json`, with `refreshInterval: 1`. Only that one key
   is touched, through a temp file and a rename. If `settings.json` is not
@@ -155,13 +180,22 @@ one.
   idle. The timer re-runs the script on a clock instead. The sync hook
   restores this value at every session start, so opting out for good means
   editing `hooks/sync.sh`.
-- Your own state is never touched by the sync step: the config file
-  `statusline.config.json`, the cost files (`.cost_cache.json`,
-  `.cost_ledger.json`, `.cost_baseline.json`), the rate-limit cache
-  (`.rate_cache.json`) and the auth cache (`.auth_cache.json`). Only the
-  toggle script writes the config, only the cost refresher writes the cost
-  files, and only the status line itself writes the rate and auth caches.
-- Other tools can feed the cost windows. Any `~/.claude/.cost_ledger_<source>.json`
+- Cost figures are refreshed on a `Stop` hook, which fires when Claude
+  finishes responding. That is when the number can actually have moved, so
+  today, week, month and all-time land within a few seconds of a turn instead
+  of waiting out the 5 minute cache the status line falls back on. The hook
+  starts the same background job the status line starts and returns at once,
+  so it never adds latency to a turn, and it skips entirely while the status
+  line is inactive, while the cost line is hidden, or within 10 seconds of the
+  last refresh. The refresh itself only rescans from the last day already
+  recorded in `state/cost_ledger.json` onward, since earlier days can no longer
+  change: on a 447 MB transcript directory that roughly halves the work. A
+  missing or unreadable ledger falls back to a full scan.
+- Your own state is never touched by the sync step: `config.json` and
+  everything under `state/`. Only the toggle script writes the config, only
+  the cost refresher writes the cost files, and only the status line itself
+  writes the rate and auth caches.
+- Other tools can feed the cost windows. Any `~/.claude/nutshell/state/ledger_<source>.json`
   holding `{"YYYY-MM-DD": cost}` is added, day by day, to what `ccusage`
   reports before today, week, month and all-time are summed, and
   `nutshell-reset-all-time-cost` resets that spend too. The refresher only reads these
@@ -196,8 +230,8 @@ one.
   anyway. On a macOS install keeping credentials in the Keychain there is no
   file to watch, so the 5 minute refresh is what notices.
 - Three lock files keep concurrent runs from stepping on each other:
-  `.statusline-sync.lock` for the sync hook, `.cost_cache.lock` for the
-  cost refresher and `.auth_cache.json.lock` for the auth probe. None of
+  `locks/sync.lock` for the sync hook, `locks/cost_cache.lock` for the
+  cost refresher and `locks/auth_cache.lock` for the auth probe. None of
   them holds user data. Locking uses `flock` where it is available and is
   skipped otherwise, so a system without `flock` still works, just without
   the race protection.
@@ -210,12 +244,14 @@ it. Afterwards, remove the `nutshell` plugin from the `/plugin` menu:
 otherwise its `SessionStart` hook reinstalls the scripts at the next
 session.
 
-By default the uninstall keeps `statusline.config.json`, your cost history,
-the rate-limit cache and the auth cache. Ask for a purge, or pass `--purge`,
-to wipe those too, including any `.cost_ledger_<source>.json` written by
-another tool and the four `.bak` files that versions before 0.3.1 left in
-`~/.claude/`. Only the `statusLine` key is removed from `settings.json`; the
-rest of the file is left alone.
+By default the uninstall keeps `config.json`, your cost history, the
+rate-limit cache and the auth cache. Ask for a purge, or pass `--purge`, to
+wipe those too: the whole `~/.claude/nutshell/` directory goes, including any
+`ledger_<source>.json` written by another tool, along with the four `.bak`
+files that versions before 0.3.1 left in `~/.claude/`. Only the `statusLine`
+key is removed from `settings.json`; the rest of the file is left alone. The
+directories are removed with `rmdir`, never a recursive delete, so anything
+unexpected inside survives.
 
 A non-purge uninstall keeps those `.bak` files on purpose:
 `settings.json.bak` may be your only copy of the settings you had before
@@ -224,7 +260,7 @@ installing. Nothing writes a new one, so once they are gone they stay gone.
 If you would rather not go through the skill, the manual fallback is:
 
 ```bash
-rm ~/.claude/statusline.sh ~/.claude/statusline-toggle.sh ~/.claude/cost_cache_refresh.sh
+rm -r ~/.claude/nutshell
 jq 'del(.statusLine)' ~/.claude/settings.json > ~/.claude/settings.json.new && mv ~/.claude/settings.json.new ~/.claude/settings.json
 ```
 

@@ -12,6 +12,21 @@
 LC_ALL=C
 export LC_ALL
 
+# Everything this plugin owns lives under one directory, so ~/.claude keeps a
+# single nutshell/ entry instead of the thirteen scripts, state files and locks
+# it used to hold (changed in 0.3.1). Only settings.json and .credentials.json
+# are read from ~/.claude itself, and both belong to Claude Code, not to us.
+NUT_DIR="$HOME/.claude/nutshell"
+
+# Create our own directories rather than trusting the sync hook to have done
+# it. A missing locks/ is not a cosmetic problem: `exec 9>"$LOCK_FILE"` on a
+# path whose directory does not exist fails, and a failed redirection on
+# `exec` terminates the shell outright, so the whole refresh would die before
+# writing anything. Guarded by a test so the common case costs no process:
+# mkdir is not a builtin, and this runs on every render in statusline.sh.
+[ -d "$NUT_DIR/state" ] && [ -d "$NUT_DIR/locks" ] \
+  || mkdir -p "$NUT_DIR/state" "$NUT_DIR/locks" 2>/dev/null
+
 input=$(cat)
 
 # One jq call instead of one per field. `// ""` not `// empty` (empty is a
@@ -61,7 +76,7 @@ advisor=""
 [ -n "$advisor_raw" ] && advisor=$(advisor_display_name "$advisor_raw")
 
 # Section visibility: the cost / session / workspace parts can each be hidden via
-# ~/.claude/statusline.config.json (toggled by statusline-toggle.sh or the /statusline
+# ~/.claude/nutshell/config.json (toggled by statusline-toggle.sh or the /statusline
 # skill). Fail open: a missing file, missing key, or bad value means the part is shown,
 # so the status line never silently goes blank.
 #
@@ -71,12 +86,12 @@ advisor=""
 # while parts are merely hidden, so Claude Code keeps its own footer hints
 # suppressed and the user would see nothing at all. statusline-toggle.sh
 # refuses to turn model off and pins the config key back to true each run.
-STATUSLINE_CONFIG_FILE="$HOME/.claude/statusline.config.json"
+STATUSLINE_CONFIG_FILE="$NUT_DIR/config.json"
 show_model=true
 show_cost=true
 show_rate=true
 show_workspace=true
-# Emoji mode — replaces text labels ("model:", "current session:", ...) with icons.
+# Emoji mode: replaces text labels ("model:", "current session:", ...) with icons.
 # Fail CLOSED (default off): unlike show_*, a missing/bad key must not
 # silently switch the status line to icons the user didn't ask for.
 emoji_mode=false
@@ -88,9 +103,22 @@ if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
   # falls back to its pre-v0.3.0 key "rate" via has(), not `//`, because
   # `.session // .rate` would treat a saved false as missing and un-hide
   # the line; statusline-toggle.sh migrates the key on its next run.
-  IFS=$'\x1f' read -r cfg_model cfg_cost cfg_session cfg_workspace cfg_emoji < <(
-    jq -r '[(.model|tostring), (.cost|tostring), (if has("session") then .session else .rate end|tostring), (.workspace|tostring), (.emoji|tostring)] | join("\u001f")' "$STATUSLINE_CONFIG_FILE" 2>/dev/null
+  IFS=$'\x1f' read -r cfg_model cfg_cost cfg_session cfg_workspace cfg_emoji cfg_disabled < <(
+    jq -r '[(.model|tostring), (.cost|tostring), (if has("session") then .session else .rate end|tostring), (.workspace|tostring), (.emoji|tostring), (.disabled|tostring)] | join("\u001f")' "$STATUSLINE_CONFIG_FILE" 2>/dev/null
   )
+  # Inactive means inactive. statusline-toggle.sh's `off` (the
+  # nutshell-inactive skill) records "disabled": true and deletes the
+  # statusLine key. Whether Claude Code notices that deletion mid-session is
+  # not verified here; if it does not, a session that already had the
+  # registration live keeps invoking this script on its 1s refreshInterval
+  # until it restarts, and sync.sh only re-checks at the next session start.
+  # Those renders would keep printing a row the user asked to hand back and,
+  # worse, keep spawning cost_cache_refresh.sh and the `claude auth status`
+  # probe below once a second. Leaving before any output or any background
+  # job is what makes "inactive" stop the tracking and not just the display.
+  # Harmless if Claude Code does drop the command on its own.
+  # Fail open, like show_*: a missing key reads "null" here, not "true".
+  [ "$cfg_disabled" = "true" ] && exit 0
   # cfg_model is read by the shared jq pass above but deliberately not
   # acted on: model is pinned on (see the comment by show_model).
   [ "$cfg_cost" = "false" ] && show_cost=false
@@ -100,11 +128,11 @@ if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
 fi
 
 # Today / weekly / monthly / all-time cost come from a background-refreshed
-# cache (~/.claude/.cost_cache.json) since computing them via `ccusage` takes
-# several seconds — too slow to run inline on every 1s status line render.
+# cache (~/.claude/nutshell/state/cost_cache.json) since computing them via `ccusage` takes
+# several seconds, too slow to run inline on every 1s status line render.
 # Each window is recomputed from the real calendar on every refresh, so they
 # roll over on their own (today at midnight, weekly on Sunday, monthly on the 1st).
-COST_CACHE_FILE="$HOME/.claude/.cost_cache.json"
+COST_CACHE_FILE="$NUT_DIR/state/cost_cache.json"
 COST_CACHE_MAX_AGE=300
 
 today_cost=""
@@ -141,7 +169,7 @@ cache_age=$(( $(date +%s) - cache_updated_at ))
 # settings.json now sets refreshInterval, putting renders on a 1s clock.
 if [ "$show_cost" = true ] && [ "$cache_age" -ge "$COST_CACHE_MAX_AGE" ] \
    && command -v ccusage >/dev/null 2>&1; then
-  ( nohup bash "$HOME/.claude/cost_cache_refresh.sh" >/dev/null 2>&1 & disown ) 2>/dev/null
+  ( nohup bash "$NUT_DIR/bin/cost_cache_refresh.sh" >/dev/null 2>&1 & disown ) 2>/dev/null
 fi
 
 ORANGE='\033[38;2;217;119;87m'
@@ -167,8 +195,8 @@ effort_color() {
   esac
 }
 
-# Field label — word ("model:") or icon ("🧠") depending on emoji_mode,
-# toggled via `/statusline emoji` (~/.claude/statusline.config.json → "emoji").
+# Field label: word ("model:") or icon ("🧠") depending on emoji_mode,
+# toggled via `/statusline emoji` (~/.claude/nutshell/config.json → "emoji").
 #
 # Every icon here must be a SINGLE codepoint whose East Asian Width is W
 # (wide). Do not use an emoji that needs a U+FE0F variation selector to
@@ -369,7 +397,7 @@ fi
 #  1. `claude auth status` (JSON, documented) reports subscriptionType as
 #     a string on a subscription and null on metered billing. It costs
 #     ~170ms, far too slow for a 1s render, so it runs in the background
-#     and lands in ~/.claude/.auth_cache.json, refreshed every
+#     and lands in ~/.claude/nutshell/state/auth_cache.json, refreshed every
 #     AUTH_CACHE_MAX_AGE seconds. Values seen: "max"; null under
 #     ANTHROPIC_API_KEY; the key is absent entirely under Bedrock. Team
 #     and Enterprise strings are unobserved, so the rule is "string vs
@@ -396,7 +424,8 @@ fi
 #
 # five_hour_present / week_present from the top jq call are superseded by
 # the `seen` bookkeeping and are kept only so the field list stays stable.
-AUTH_CACHE_FILE="$HOME/.claude/.auth_cache.json"
+AUTH_CACHE_FILE="$NUT_DIR/state/auth_cache.json"
+AUTH_LOCK_FILE="$NUT_DIR/locks/auth_cache.lock"
 AUTH_CRED_FILE="$HOME/.claude/.credentials.json"
 AUTH_CACHE_MAX_AGE=300
 
@@ -494,7 +523,7 @@ fi
 if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ "$auth_age" -ge "$AUTH_CACHE_MAX_AGE" ] \
    && command -v claude >/dev/null 2>&1; then
   ( nohup bash -c '
-      f="$1"; sid="$2"; cred="$3"
+      f="$1"; sid="$2"; cred="$3"; lock="$4"
       # One shared lock for the whole job, so the read-modify-write of the
       # sessions map does not lose another session'"'"'s entry. Taking it
       # non-blocking means a second session skips this round rather than
@@ -502,7 +531,7 @@ if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ "$auth_age" -ge "$AUTH_C
       # 200ms, so it simply gets the lock then. Where flock is missing (stock
       # macOS) two probes can interleave and one entry is lost, which costs
       # that session a re-probe at its next cycle, nothing worse.
-      if command -v flock >/dev/null 2>&1 && exec 9>"$f.lock" 2>/dev/null; then
+      if command -v flock >/dev/null 2>&1 && exec 9>"$lock" 2>/dev/null; then
         flock -n 9 || exit 0
       fi
       now=$(date +%s)
@@ -536,7 +565,7 @@ if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ "$auth_age" -ge "$AUTH_C
       [ -n "$new" ] || exit 0
       tmp=$(mktemp "$f.XXXXXX" 2>/dev/null) || exit 0
       printf "%s" "$new" > "$tmp" && mv "$tmp" "$f" || rm -f "$tmp"
-    ' auth-refresh "$AUTH_CACHE_FILE" "$session_id" "$AUTH_CRED_FILE" >/dev/null 2>&1 & disown ) 2>/dev/null
+    ' auth-refresh "$AUTH_CACHE_FILE" "$session_id" "$AUTH_CRED_FILE" "$AUTH_LOCK_FILE" >/dev/null 2>&1 & disown ) 2>/dev/null
 fi
 
 # First-response signal for the "never seen" rule above. Any positive
@@ -575,7 +604,7 @@ responded=$(awk -v c="$cost" 'BEGIN { print (c + 0 > 0) ? "true" : "false" }')
 # still renders, so a gateway that does report limits is unaffected. Not
 # writing matters just as much: publishing an empty reading once a second
 # would blank the line in the subscription tab that is actually metered.
-RATE_CACHE_FILE="$HOME/.claude/.rate_cache.json"
+RATE_CACHE_FILE="$NUT_DIR/state/rate_cache.json"
 if [ "$show_rate" = true ]; then
   if [ "$auth_plan" = none ]; then
     rate_cache='{}'

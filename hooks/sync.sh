@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Silent install/sync of statusline scripts into ~/.claude/.
-# Never touches user data: statusline.config.json, .cost_cache.json,
-# .cost_ledger.json, .rate_cache.json, .auth_cache.json.
+# Silent install/sync of statusline scripts into ~/.claude/nutshell/.
+# Never touches user data: config.json and everything under state/.
 # Always exits 0 so a sync problem can never block a session.
 
 # Silent means silent: nothing on stderr either. Without this, a trailing
@@ -12,10 +11,15 @@ exec 2>/dev/null
 
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SRC="$ROOT/skills/nutshell-setup/scripts"
-DEST="$HOME/.claude"
+# Everything this plugin owns lives under one directory as of 0.3.1. Before
+# that the three scripts, the config, five state files and three locks all sat
+# loose in ~/.claude, thirteen entries deep in a directory full of Claude
+# Code's own files.
+HOME_CLAUDE="$HOME/.claude"
+DEST="$HOME_CLAUDE/nutshell"
 
 [ -d "$SRC" ] || exit 0
-mkdir -p "$DEST" 2>/dev/null
+mkdir -p "$DEST/bin" "$DEST/state" "$DEST/locks" 2>/dev/null
 
 # Non-blocking lock: two SessionStart hooks can start at once (multiple
 # panes/sessions). Without this, interleaved runs could race on the
@@ -23,23 +27,68 @@ mkdir -p "$DEST" 2>/dev/null
 # another instance already holds the lock, it is doing the same work, so
 # just exit.
 if command -v flock >/dev/null 2>&1; then
-  LOCK="$DEST/.statusline-sync.lock"
+  LOCK="$DEST/locks/sync.lock"
   exec 9>"$LOCK" 2>/dev/null || exit 0
   flock -n 9 || exit 0
 fi
 
+# Migration from the pre-0.3.1 layout. Move, never copy: two files claiming to
+# be the same ledger is worse than one in the wrong place. Each move happens
+# only when the new path does not exist yet, so a partially migrated install
+# finishes cleanly and an already-migrated one is untouched. Held under the
+# same lock as everything else here, so two sessions starting together cannot
+# both migrate.
+migrate_one() {
+  [ -e "$1" ] || return 0
+  [ -e "$2" ] && return 0
+  mv "$1" "$2" 2>/dev/null
+}
+migrate_one "$HOME_CLAUDE/statusline.config.json" "$DEST/config.json"
+migrate_one "$HOME_CLAUDE/.cost_cache.json"       "$DEST/state/cost_cache.json"
+migrate_one "$HOME_CLAUDE/.cost_ledger.json"      "$DEST/state/cost_ledger.json"
+migrate_one "$HOME_CLAUDE/.cost_baseline.json"    "$DEST/state/cost_baseline.json"
+migrate_one "$HOME_CLAUDE/.rate_cache.json"       "$DEST/state/rate_cache.json"
+migrate_one "$HOME_CLAUDE/.auth_cache.json"       "$DEST/state/auth_cache.json"
+# Extra per-source ledgers, .cost_ledger_<source>.json -> state/ledger_<source>.json.
+# The source names are not ours to know, hence a glob. The tool that writes one
+# has to be repointed at the new path by its owner; this only rescues the
+# history, it cannot redirect a third-party writer.
+for old_extra in "$HOME_CLAUDE/.cost_ledger_"*.json; do
+  [ -f "$old_extra" ] || continue
+  base=${old_extra##*/}                 # .cost_ledger_<source>.json
+  source_name=${base#.cost_ledger_}     # <source>.json
+  migrate_one "$old_extra" "$DEST/state/ledger_$source_name"
+done
+# Locks carry no data, so they are deleted outright rather than moved.
+rm -f "$HOME_CLAUDE/.cost_cache.lock" \
+      "$HOME_CLAUDE/.auth_cache.json.lock" \
+      "$HOME_CLAUDE/.statusline-sync.lock" 2>/dev/null
+
 for f in statusline.sh statusline-toggle.sh cost_cache_refresh.sh; do
   [ -f "$SRC/$f" ] || continue
-  if [ ! -f "$DEST/$f" ] || ! diff -q "$SRC/$f" "$DEST/$f" >/dev/null 2>&1; then
+  if [ ! -f "$DEST/bin/$f" ] || ! diff -q "$SRC/$f" "$DEST/bin/$f" >/dev/null 2>&1; then
     # Copy to a same-directory staging name, chmod it, then rename into place.
     # A running session renders roughly once a second, so a direct cp onto
-    # $DEST/$f could be read mid-write; the final rename is atomic instead.
-    cp "$SRC/$f" "$DEST/$f.new" 2>/dev/null \
-      && chmod +x "$DEST/$f.new" 2>/dev/null \
-      && mv "$DEST/$f.new" "$DEST/$f" 2>/dev/null \
-      || rm -f "$DEST/$f.new" 2>/dev/null
+    # $DEST/bin/$f could be read mid-write; the final rename is atomic instead.
+    cp "$SRC/$f" "$DEST/bin/$f.new" 2>/dev/null \
+      && chmod +x "$DEST/bin/$f.new" 2>/dev/null \
+      && mv "$DEST/bin/$f.new" "$DEST/bin/$f" 2>/dev/null \
+      || rm -f "$DEST/bin/$f.new" 2>/dev/null
   fi
 done
+
+# Only now drop the pre-0.3.1 copies, once bin/ actually holds all three. If a
+# copy above failed (full disk, unreadable source) the old scripts are still
+# the working install, and deleting them first would leave the user with
+# neither. Deleted rather than moved: they are replaced from the bundle every
+# sync anyway, and a local edit to one of them was already unrecoverable.
+if [ -x "$DEST/bin/statusline.sh" ] \
+   && [ -x "$DEST/bin/statusline-toggle.sh" ] \
+   && [ -x "$DEST/bin/cost_cache_refresh.sh" ]; then
+  rm -f "$HOME_CLAUDE/statusline.sh" \
+        "$HOME_CLAUDE/statusline-toggle.sh" \
+        "$HOME_CLAUDE/cost_cache_refresh.sh" 2>/dev/null
+fi
 
 # Register the statusLine command (silent). Requires jq.
 # refreshInterval is required, not cosmetic: Claude Code only re-runs the
@@ -51,14 +100,14 @@ done
 # session sits idle. A 1s timer re-runs the command on a clock instead.
 #
 # Unless the user turned the status line off with `statusline-toggle.sh off`,
-# which records "disabled": true in statusline.config.json and deletes the
-# key. Without this check the hook would re-register on the next session
-# start and the opt-out would last exactly one session. An absent or
-# unreadable config reads as not disabled, so the default is unchanged.
+# which records "disabled": true in config.json and deletes the key. Without
+# this check the hook would re-register on the next session start and the
+# opt-out would last exactly one session. An absent or unreadable config reads
+# as not disabled, so the default is unchanged.
 if command -v jq >/dev/null 2>&1 \
-   && [ "$(jq -r '.disabled' "$DEST/statusline.config.json" 2>/dev/null)" != "true" ]; then
-  SETTINGS="$DEST/settings.json"
-  WANT='{"type":"command","command":"bash ~/.claude/statusline.sh","refreshInterval":1}'
+   && [ "$(jq -r '.disabled' "$DEST/config.json" 2>/dev/null)" != "true" ]; then
+  SETTINGS="$HOME_CLAUDE/settings.json"
+  WANT='{"type":"command","command":"bash ~/.claude/nutshell/bin/statusline.sh","refreshInterval":1}'
   # A settings.json that exists but is not a JSON object (corrupt, or valid
   # JSON that isn't an object, e.g. `[1,2]`) is left exactly as the user
   # left it. Every `.statusLine = $v` below would fail on it anyway, and
@@ -76,11 +125,13 @@ if command -v jq >/dev/null 2>&1 \
   # /statusline writes one (e.g. generated from your shell PS1), and without
   # this check the hook would silently replace it on every session start.
   # An absent key is free to claim; ours is recognised by the command
-  # pointing at the script we install.
+  # pointing at the script we install, at either the current path or the
+  # pre-0.3.1 one, which is what lets an old install be re-registered at the
+  # new location instead of being treated as a stranger's.
   cur_cmd=$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)
   foreign=0
   case "$cur_cmd" in
-    ''|*'/.claude/statusline.sh'*) ;;
+    ''|*'/.claude/nutshell/bin/statusline.sh'*|*'/.claude/statusline.sh'*) ;;
     *) foreign=1 ;;
   esac
   if [ "$foreign" -eq 0 ] && [ "$cur" != "$want" ]; then

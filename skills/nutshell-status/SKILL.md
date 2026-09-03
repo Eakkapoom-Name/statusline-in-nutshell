@@ -5,14 +5,14 @@ description: Print which parts of the nutshell status line are currently on or o
 
 # Status line state
 
-If `~/.claude/statusline-toggle.sh` does not exist, invoke the setup skill
+If `~/.claude/nutshell/bin/statusline-toggle.sh` does not exist, invoke the setup skill
 with the Skill tool first (`nutshell:nutshell-setup` if that name is listed,
 otherwise `nutshell-setup`), then continue.
 
 Run:
 
 ```bash
-bash ~/.claude/statusline-toggle.sh status
+bash ~/.claude/nutshell/bin/statusline-toggle.sh status
 ```
 
 Report the script's output verbatim, preformatted. No prose around it.

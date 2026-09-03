@@ -6,7 +6,7 @@ argument-hint: "[--purge]"
 
 # Uninstall the status line
 
-Do not run the setup skill from here. If `~/.claude/statusline-toggle.sh`
+Do not run the setup skill from here. If `~/.claude/nutshell/bin/statusline-toggle.sh`
 does not exist, say nothing is installed and stop.
 
 Argument: $0
@@ -21,18 +21,18 @@ an explicit request to wipe config and cost history, as the purge variant.
    confirmation, not after, but do not wait for them to do it: removing the
    plugin first would take this command with it.
 2. Ask: "This removes the status line registration and deletes the installed
-   scripts from ~/.claude/. Your toggle config and cost history are kept.
-   Proceed?" For the purge variant, ask instead: "This removes the status
-   line registration, deletes the installed scripts from ~/.claude/, and
-   also wipes your toggle config and cost history, including any cost
-   ledgers written by other tools and any .bak files left by versions
-   before 0.3.1. Proceed?" Wait for an
+   scripts from ~/.claude/nutshell/bin/. Your toggle config and cost history
+   are kept. Proceed?" For the purge variant, ask instead: "This removes the
+   status line registration and the whole ~/.claude/nutshell/ directory, so
+   your toggle config and cost history go too, including any cost ledgers
+   written by other tools and any .bak files left by versions before 0.3.1.
+   Proceed?" Wait for an
    answer and reply with exactly "Done." or "Abort." and nothing else.
 3. Only after yes, run one of:
 
 ```bash
-bash ~/.claude/statusline-toggle.sh uninstall --yes
-bash ~/.claude/statusline-toggle.sh uninstall --yes --purge
+bash ~/.claude/nutshell/bin/statusline-toggle.sh uninstall --yes
+bash ~/.claude/nutshell/bin/statusline-toggle.sh uninstall --yes --purge
 ```
 
 Without `--yes` the script only warns and does nothing.

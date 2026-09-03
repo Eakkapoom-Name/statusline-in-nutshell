@@ -6,11 +6,11 @@ argument-hint: "[all|cost|session|workspace]"
 
 # Hide a status line part
 
-If `~/.claude/statusline-toggle.sh` does not exist, invoke the setup skill
+If `~/.claude/nutshell/bin/statusline-toggle.sh` does not exist, invoke the setup skill
 with the Skill tool first (`nutshell:nutshell-setup` if that name is listed,
 otherwise `nutshell-setup`), then continue.
 
-Then run `bash ~/.claude/statusline-toggle.sh status`. If the `status-line`
+Then run `bash ~/.claude/nutshell/bin/statusline-toggle.sh status`. If the `status-line`
 row reads `off`, the status line is inactive: say so, tell the user to run
 the nutshell-active skill first, and stop. The script refuses this command
 while inactive anyway; checking first avoids asking a question that cannot
@@ -24,9 +24,9 @@ dollar sign followed by a zero), there is no argument.
 No confirmation is needed. The model line cannot be hidden, so no
 combination of these commands can leave the status line blank.
 
-- No argument, or `all`: `bash ~/.claude/statusline-toggle.sh all off`
+- No argument, or `all`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh all off`
   (hides cost, session and workspace; model stays on)
-- `cost`, `session` or `workspace`: `bash ~/.claude/statusline-toggle.sh <part> off`
+- `cost`, `session` or `workspace`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh <part> off`
 - `model`: not possible. Say the model line is always shown, and that the
   nutshell-inactive skill is the way to give the whole row back to Claude
   Code. Do not run the script.
