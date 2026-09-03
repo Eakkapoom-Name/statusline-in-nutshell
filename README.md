@@ -118,7 +118,6 @@ one. If you installed with npx, drop the `nutshell:` prefix, for example
   written by Claude Code's own `/statusline`, `nutshell-inactive` refuses to
   delete it and `nutshell-active` refuses to overwrite it. Use
   `/nutshell:nutshell-active --force` to take over deliberately.
-  `settings.json` is backed up before either change.
 - `/nutshell:nutshell-status` prints the current on/off state of the status
   line itself and of model, cost, session, workspace and emoji.
 - `/nutshell:nutshell-reset-all-time-cost` wipes the all-time cost counter
@@ -146,12 +145,14 @@ one. If you installed with npx, drop the `nutshell:` prefix, for example
 
 - The three scripts (`statusline.sh`, `statusline-toggle.sh` and
   `cost_cache_refresh.sh`) are copied to `~/.claude/`. If one is already
-  there and differs from the bundled version, it is backed up to
-  `<name>.bak` first.
+  there and differs from the bundled version, it is overwritten. Nothing
+  here writes a `.bak`, so a local edit to one of those three scripts is
+  lost at the next sync; keep your copy elsewhere.
 - The status line is registered under the `statusLine` key in
-  `~/.claude/settings.json`, with `refreshInterval: 1`. `settings.json` is
-  backed up before any change. If it was already broken JSON, the original
-  bytes still land in the backup before the file is repaired.
+  `~/.claude/settings.json`, with `refreshInterval: 1`. Only that one key
+  is touched, through a temp file and a rename. If `settings.json` is not
+  a JSON object, it is left exactly as it is and registration is skipped
+  until you fix it.
 - The 1-second refresh interval is deliberate. Claude Code only re-runs a
   status line on assistant messages and a few UI events, so the advisor and
   cost segments would otherwise sit on old values while the session is
@@ -223,13 +224,12 @@ npx skills remove nutshell-setup nutshell-status nutshell-show nutshell-hide nut
 
 By default the uninstall keeps `statusline.config.json`, your cost history,
 the rate-limit cache and the auth cache. Ask for a purge, or pass `--purge`,
-to wipe those too. `settings.json` is backed up to `settings.json.bak`
-first.
+to wipe those too. Only the `statusLine` key is removed from
+`settings.json`; the rest of the file is left alone.
 
 If you would rather not go through the skill, the manual fallback is:
 
 ```bash
-cp ~/.claude/settings.json ~/.claude/settings.json.bak
 rm ~/.claude/statusline.sh ~/.claude/statusline-toggle.sh ~/.claude/cost_cache_refresh.sh
 jq 'del(.statusLine)' ~/.claude/settings.json > ~/.claude/settings.json.new && mv ~/.claude/settings.json.new ~/.claude/settings.json
 ```

@@ -102,9 +102,11 @@ current_statusline_command() {
 # Claude Code fall back to its own footer: it suppresses the built-in
 # keyboard hints only while a custom status line is configured, so hiding
 # every part is not the same thing (that leaves the key set, so the footer
-# stays suppressed and the area is simply empty). settings.json is backed
-# up first, and the rewrite is a same-directory mktemp + mv so a reader
-# never catches a half-written file.
+# stays suppressed and the area is simply empty). The rewrite is a
+# same-directory mktemp + mv so a reader never catches a half-written
+# file. Nothing here writes a .bak: a settings.json that is not a JSON
+# object is refused above rather than rewritten, so there is no edit a
+# backup would protect.
 set_statusline_key() {
   local mode="$1" tmp filter
   [ -f "$SETTINGS_FILE" ] || { [ "$mode" = "off" ] && return 0; printf '{}\n' > "$SETTINGS_FILE"; }
@@ -112,7 +114,6 @@ set_statusline_key() {
     echo "statusline-toggle: $SETTINGS_FILE is not valid JSON, leaving it alone" >&2
     return 1
   }
-  cp "$SETTINGS_FILE" "${SETTINGS_FILE}.bak" 2>/dev/null
   tmp="$(mktemp "${SETTINGS_FILE}.XXXXXX")" || return 1
   if [ "$mode" = "off" ]; then
     filter='del(.statusLine)'
@@ -258,7 +259,6 @@ case "$cmd" in
       set_flag disabled true
       echo "status line: off — Claude Code's default footer is back. Your part"
       echo "settings are kept; run 'statusline-toggle.sh on' to restore this one."
-      echo "settings.json backed up to settings.json.bak."
     else
       echo "statusline-toggle: could not update settings.json, status line left on" >&2
       exit 1
@@ -280,7 +280,6 @@ case "$cmd" in
     if set_statusline_key on; then
       set_flag disabled false
       echo "status line: on — restored with your saved part settings."
-      echo "settings.json backed up to settings.json.bak."
     else
       echo "statusline-toggle: could not update settings.json, status line left off" >&2
       exit 1
@@ -368,10 +367,7 @@ case "$cmd" in
       exit 1
     fi
     SETTINGS="$HOME/.claude/settings.json"
-    backed_up=false
     if [ -f "$SETTINGS" ]; then
-      cp "$SETTINGS" "${SETTINGS}.bak"
-      backed_up=true
       if jq -e . "$SETTINGS" >/dev/null 2>&1; then
         tmp="$(mktemp "${SETTINGS}.XXXXXX")"
         if jq 'del(.statusLine)' "$SETTINGS" > "$tmp" 2>/dev/null; then
@@ -405,12 +401,10 @@ case "$cmd" in
             "$HOME/.claude/.auth_cache.json" \
             "$HOME/.claude/.auth_cache.json.lock"
     fi
-    settings_note=""
-    [ "$backed_up" = true ] && settings_note=" settings.json backed up to settings.json.bak."
     if [ "$purge" = true ]; then
-      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh, and purged config/cost/lock files.${settings_note}"
+      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh, and purged config/cost/lock files."
     else
-      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh.${settings_note} Config, cost history, rate cache and auth cache were kept."
+      echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh. Config, cost history, rate cache and auth cache were kept."
     fi
     rm -f "$HOME/.claude/statusline-toggle.sh"
     exit 0

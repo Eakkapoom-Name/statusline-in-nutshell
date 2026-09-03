@@ -16,14 +16,18 @@ one when it does not.
    SKILL.md.
 2. For each of `statusline.sh`, `statusline-toggle.sh` and
    `cost_cache_refresh.sh`: if it is missing from `~/.claude/`, or differs
-   from the bundled copy, back up any existing one to `<name>.bak`, copy the
-   bundled copy to `~/.claude/`, and `chmod +x` it.
+   from the bundled copy, copy the bundled copy to `~/.claude/` and
+   `chmod +x` it. Do not write a `.bak`: nothing in this plugin creates
+   backup files.
 3. Then, unless `~/.claude/statusline.config.json` has `"disabled": true`
    (the user handed the row back to Claude Code with the nutshell-inactive skill),
    make sure `~/.claude/settings.json` carries
    `"statusLine": {"type": "command", "command": "bash ~/.claude/statusline.sh", "refreshInterval": 1}`.
-   If the key is absent, or present but different, back up settings.json and
-   add or update it with `jq`. All three keys are required: without
+   If the key is absent, or present but different, add or update it with
+   `jq`, writing through a same-directory temp file and a rename. Do not
+   back settings.json up. If the file exists but is not a JSON object,
+   leave it untouched and skip registration rather than repairing it, and
+   say so in the report. All three keys are required: without
    `refreshInterval` the status line only re-runs on assistant messages and a
    few UI events, so disk-sourced segments (advisor, cost, session) stay stale
    while the session is idle.

@@ -18,9 +18,10 @@ DEST="$HOME/.claude"
 mkdir -p "$DEST" 2>/dev/null
 
 # Non-blocking lock: two SessionStart hooks can start at once (multiple
-# panes/sessions). Without this, interleaved runs could clobber a .bak
-# that holds a user's only copy of a local edit. If another instance
-# already holds the lock, it is doing the same work, so just exit.
+# panes/sessions). Without this, interleaved runs could race on the
+# settings.json read-modify-write below and lose one of the writes. If
+# another instance already holds the lock, it is doing the same work, so
+# just exit.
 if command -v flock >/dev/null 2>&1; then
   LOCK="$DEST/.statusline-sync.lock"
   exec 9>"$LOCK" 2>/dev/null || exit 0
@@ -30,7 +31,6 @@ fi
 for f in statusline.sh statusline-toggle.sh cost_cache_refresh.sh; do
   [ -f "$SRC/$f" ] || continue
   if [ ! -f "$DEST/$f" ] || ! diff -q "$SRC/$f" "$DEST/$f" >/dev/null 2>&1; then
-    [ -f "$DEST/$f" ] && cp "$DEST/$f" "$DEST/$f.bak" 2>/dev/null
     # Copy to a same-directory staging name, chmod it, then rename into place.
     # A running session renders roughly once a second, so a direct cp onto
     # $DEST/$f could be read mid-write; the final rename is atomic instead.
@@ -41,7 +41,7 @@ for f in statusline.sh statusline-toggle.sh cost_cache_refresh.sh; do
   fi
 done
 
-# Register the statusLine command (silent; backup first). Requires jq.
+# Register the statusLine command (silent). Requires jq.
 # refreshInterval is required, not cosmetic: Claude Code only re-runs the
 # statusLine command on session start, a new assistant message, /compact,
 # a permission-mode change, or a vim-mode toggle. Switching the advisor
@@ -59,27 +59,16 @@ if command -v jq >/dev/null 2>&1 \
    && [ "$(jq -r '.disabled' "$DEST/statusline.config.json" 2>/dev/null)" != "true" ]; then
   SETTINGS="$DEST/settings.json"
   WANT='{"type":"command","command":"bash ~/.claude/statusline.sh","refreshInterval":1}'
-  backed_up=0
+  # A settings.json that exists but is not a JSON object (corrupt, or valid
+  # JSON that isn't an object, e.g. `[1,2]`) is left exactly as the user
+  # left it. Every `.statusLine = $v` below would fail on it anyway, and
+  # rewriting it would destroy settings this plugin does not own and never
+  # backs up. Registration is skipped this run and retried at the next
+  # session start, once the file is valid again.
   if [ -f "$SETTINGS" ]; then
-    if ! jq -e 'type == "object"' "$SETTINGS" >/dev/null 2>&1; then
-      # Invalid JSON, or valid JSON that isn't an object (e.g. `[1,2]`, which
-      # would make every later `.statusLine = $v` fail forever): back up the
-      # original bytes BEFORE blanking the file, so the backup constraint
-      # (backup must capture pre-run bytes) holds even for a corrupt or
-      # non-object settings.json. The mismatch branch below must not
-      # overwrite this backup with the '{}' placeholder, so it is skipped
-      # this run via backed_up.
-      cp "$SETTINGS" "$SETTINGS.bak" 2>/dev/null
-      backed_up=1
-      echo '{}' > "$SETTINGS" 2>/dev/null
-    fi
+    jq -e 'type == "object"' "$SETTINGS" >/dev/null 2>&1 || exit 0
   else
-    # No settings.json existed, so there is nothing of the user's to back
-    # up: skip the later backup cp instead of backing up our own '{}'
-    # placeholder, which would leave a confusing stray .bak on a pristine
-    # machine.
     echo '{}' > "$SETTINGS" 2>/dev/null
-    backed_up=1
   fi
   cur=$(jq -c '.statusLine // empty' "$SETTINGS" 2>/dev/null)
   want=$(printf '%s' "$WANT" | jq -c .)
@@ -95,7 +84,6 @@ if command -v jq >/dev/null 2>&1 \
     *) foreign=1 ;;
   esac
   if [ "$foreign" -eq 0 ] && [ "$cur" != "$want" ]; then
-    [ "$backed_up" -eq 1 ] || cp "$SETTINGS" "$SETTINGS.bak" 2>/dev/null
     # Same-directory temp name (not the default /tmp) so the later mv is an
     # atomic same-filesystem rename instead of a cross-filesystem
     # truncate-and-rewrite that a concurrent reader could catch mid-write.
