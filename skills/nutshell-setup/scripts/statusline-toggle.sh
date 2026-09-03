@@ -3,16 +3,16 @@
 #
 # The status line (statusline.sh) is divided into three parts:
 #   model  — model name / advisor / context bar               (line 1)
-#   cost   — session / today / week / month / all-time spend   (line 2)
-#   rate   — usage rate: current session + current week limits (line 3)
+#   cost   — current session / today / week / month / all-time spend (line 2)
+#   session — usage limits: current 5-hour window + current week (line 3)
 #
-# Independently of those, "emoji" swaps text labels ("model:", "session:", ...)
-# for icons everywhere. Default OFF (fail-closed) — unlike model/cost/rate,
+# Independently of those, "emoji" swaps text labels ("model:", "current session:", ...)
+# for icons everywhere. Default OFF (fail-closed) — unlike model/cost/session,
 # which fail open (missing key = shown), a missing/bad emoji key must not
 # silently switch the status line to icons the user didn't ask for.
 #
 # Usage:
-#   statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | rate | workspace
+#   statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | session | workspace
 #   statusline-toggle.sh all <on|off>
 #   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle
 #   statusline-toggle.sh status
@@ -23,11 +23,11 @@ set -euo pipefail
 
 CONFIG="$HOME/.claude/statusline.config.json"
 REFRESH="$HOME/.claude/cost_cache_refresh.sh"
-PARTS=(model cost rate workspace)
+PARTS=(model cost session workspace)
 SETTINGS_FILE="$HOME/.claude/settings.json"
 # Must stay byte-identical in meaning to hooks/sync.sh's WANT and to
-# SKILL.md step 0. Three copies exist because the plugin path, the npx
-# path, and this script can each be the one that registers the status
+# skills/nutshell-setup/SKILL.md. Three copies exist because the plugin path,
+# the npx path, and this script can each be the one that registers the status
 # line; if they disagree they rewrite each other on every session start.
 STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/statusline.sh","refreshInterval":1}'
 
@@ -35,7 +35,7 @@ STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/statusline.sh","re
 usage() {
   cat <<'EOF'
 Usage:
-  statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | rate | workspace
+  statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | session | workspace
   statusline-toggle.sh all <on|off>
   statusline-toggle.sh off                      # hand the row back to Claude Code's own footer
   statusline-toggle.sh on [--force]             # take it back, with your saved part settings
@@ -46,8 +46,8 @@ Usage:
 
 Parts:
   model  model name / advisor / context bar               (line 1)
-  cost   session / today / week / month / all-time spend   (line 2)
-  rate   usage rate: current session + current week limits (line 3)
+  cost   current session / today / week / month / all-time spend (line 2)
+  session  usage limits: current 5-hour window + current week (line 3)
   workspace current directory / repo / git branch          (line 4)
   emoji  replace text labels with icons across all shown parts (default off)
 
@@ -63,6 +63,16 @@ EOF
 # written before this existed.
 is_disabled() {
   [ "$(jq -r '.disabled' "$CONFIG" 2>/dev/null)" = "true" ]
+}
+
+# Part, emoji and reset commands refuse while the status line is inactive
+# (handed back to Claude Code with `off`), since nothing they change would
+# be visible. `status`, `on`, `off` and `uninstall` still work.
+require_active() {
+  if is_disabled; then
+    echo "status line: inactive. Run 'statusline-toggle.sh on' (the nutshell-active skill) first." >&2
+    exit 1
+  fi
 }
 
 # True when settings.json's statusLine is absent, or is one we installed.
@@ -121,7 +131,15 @@ set_flag() {
 # Ensure the config exists and is valid JSON; recreate with defaults otherwise.
 ensure_config() {
   if [ ! -f "$CONFIG" ] || ! jq -e . "$CONFIG" >/dev/null 2>&1; then
-    printf '{\n  "model": true,\n  "cost": true,\n  "rate": true,\n  "workspace": true,\n  "emoji": false,\n  "disabled": false\n}\n' > "$CONFIG"
+    printf '{\n  "model": true,\n  "cost": true,\n  "session": true,\n  "workspace": true,\n  "emoji": false,\n  "disabled": false\n}\n' > "$CONFIG"
+  fi
+  # Migrate "rate" (the part's name before v0.3.0) to "session", keeping the
+  # saved value so a hidden line stays hidden. If both keys exist, "session"
+  # wins and the stale "rate" is dropped.
+  if jq -e 'has("rate")' "$CONFIG" >/dev/null 2>&1; then
+    local tmp0
+    tmp0="$(mktemp "${CONFIG}.XXXXXX")"
+    jq 'if has("session") then del(.rate) else .session = .rate | del(.rate) end' "$CONFIG" > "$tmp0" && mv "$tmp0" "$CONFIG"
   fi
   # Backfill "emoji" for configs written before emoji mode existed.
   if ! jq -e 'has("emoji")' "$CONFIG" >/dev/null 2>&1; then
@@ -174,7 +192,7 @@ get_emoji() {
 
 # Full box-drawn table — only for the explicit "status" command.
 print_status() {
-  local p state names=(Part status-line model cost rate workspace emoji) states=(Status) name_w=0 state_w=0
+  local p state names=(Part status-line model cost session workspace emoji) states=(Status) name_w=0 state_w=0
   local top sep bot i
 
   if is_disabled; then states+=("off"); else states+=("on"); fi
@@ -267,6 +285,7 @@ case "$cmd" in
     fi
     ;;
   all)
+    require_active
     action="${2:-}"
     case "$action" in
       on)  val=true ;;
@@ -274,15 +293,9 @@ case "$cmd" in
       *) echo "statusline-toggle: 'all' needs on|off" >&2; usage; exit 1 ;;
     esac
     for p in "${PARTS[@]}"; do set_part "$p" "$val"; print_one "$p" "$action"; done
-    # `if`, not `is_disabled && echo`: the && form is the last command in this
-    # branch, so on the normal path (not disabled) it makes a fully successful
-    # run exit 1. SKILL.md shells out to this script, so a non-zero status
-    # reads as a failed toggle.
-    if is_disabled; then
-      echo "note: the status line is off, so this takes effect after 'statusline-toggle.sh on'."
-    fi
     ;;
-  model|cost|rate|workspace)
+  model|cost|session|workspace)
+    require_active
     action="${2:-}"
     case "$action" in
       on)  set_part "$cmd" true ;;
@@ -293,12 +306,9 @@ case "$cmd" in
       *) echo "statusline-toggle: '$cmd' needs on|off|toggle" >&2; usage; exit 1 ;;
     esac
     print_one "$cmd" "$action"
-    # See the `all` branch: the && form would make a successful toggle exit 1.
-    if is_disabled; then
-      echo "note: the status line is off, so this takes effect after 'statusline-toggle.sh on'."
-    fi
     ;;
   emoji)
+    require_active
     action="${2:-toggle}"
     case "$action" in
       on)  set_part emoji true ;;
@@ -311,6 +321,7 @@ case "$cmd" in
     print_one emoji "$action"
     ;;
   reset-all-time)
+    require_active
     if [ "${2:-}" != "--yes" ]; then
       echo "statusline-toggle: 'reset-all-time' resets your all-time cost to 0 and cannot be undone." >&2
       echo "(today / week / month are kept.) Re-run to confirm:" >&2
@@ -407,7 +418,7 @@ case "$cmd" in
     exit 1
     ;;
   *)
-    echo "statusline-toggle: unknown part '$cmd' (expected model|cost|rate|workspace|all|on|off|emoji|status|reset-all-time|uninstall)" >&2
+    echo "statusline-toggle: unknown part '$cmd' (expected model|cost|session|workspace|all|on|off|emoji|status|reset-all-time|uninstall)" >&2
     usage
     exit 1
     ;;

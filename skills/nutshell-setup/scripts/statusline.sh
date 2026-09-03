@@ -60,7 +60,7 @@ advisor_display_name() {
 advisor=""
 [ -n "$advisor_raw" ] && advisor=$(advisor_display_name "$advisor_raw")
 
-# Section visibility — the model / cost / usage-rate parts can each be hidden via
+# Section visibility — the model / cost / session / workspace parts can each be hidden via
 # ~/.claude/statusline.config.json (toggled by statusline-toggle.sh or the /statusline
 # skill). Fail open: a missing file, missing key, or bad value means the part is shown,
 # so the status line never silently goes blank.
@@ -69,7 +69,7 @@ show_model=true
 show_cost=true
 show_rate=true
 show_workspace=true
-# Emoji mode — replaces text labels ("model:", "session:", ...) with icons.
+# Emoji mode — replaces text labels ("model:", "current session:", ...) with icons.
 # Fail CLOSED (default off): unlike show_*, a missing/bad key must not
 # silently switch the status line to icons the user didn't ask for.
 emoji_mode=false
@@ -77,13 +77,16 @@ if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
   # Raw value, not `.key // "true"` (// treats false as empty, would hide
   # it). Missing key -> "null" text, so show_* stays shown (fail open),
   # emoji stays off (fail closed). Duplicated in statusline-toggle.sh's
-  # get_part()/get_emoji(); keep both in sync by hand.
-  IFS=$'\x1f' read -r cfg_model cfg_cost cfg_rate cfg_workspace cfg_emoji < <(
-    jq -r '[(.model|tostring), (.cost|tostring), (.rate|tostring), (.workspace|tostring), (.emoji|tostring)] | join("\u001f")' "$STATUSLINE_CONFIG_FILE" 2>/dev/null
+  # get_part()/get_emoji(); keep both in sync by hand. The session part
+  # falls back to its pre-v0.3.0 key "rate" via has(), not `//`, because
+  # `.session // .rate` would treat a saved false as missing and un-hide
+  # the line; statusline-toggle.sh migrates the key on its next run.
+  IFS=$'\x1f' read -r cfg_model cfg_cost cfg_session cfg_workspace cfg_emoji < <(
+    jq -r '[(.model|tostring), (.cost|tostring), (if has("session") then .session else .rate end|tostring), (.workspace|tostring), (.emoji|tostring)] | join("\u001f")' "$STATUSLINE_CONFIG_FILE" 2>/dev/null
   )
   [ "$cfg_model" = "false" ] && show_model=false
   [ "$cfg_cost" = "false" ] && show_cost=false
-  [ "$cfg_rate" = "false" ] && show_rate=false
+  [ "$cfg_session" = "false" ] && show_rate=false
   [ "$cfg_workspace" = "false" ] && show_workspace=false
   [ "$cfg_emoji" = "true" ] && emoji_mode=true
 fi
@@ -189,7 +192,7 @@ label() {
       model)        printf 'model:' ;;
       advisor)      printf 'advisor:' ;;
       context)      printf 'context:' ;;
-      cost_session) printf 'session:' ;;
+      cost_session) printf 'current session:' ;;
       cost_today)   printf 'today:' ;;
       cost_week)    printf 'week:' ;;
       cost_month)   printf 'month:' ;;
@@ -452,7 +455,7 @@ auth_age=$(( $(date +%s) - auth_updated_at ))
 #  - the verdict says metered while the payload carries rate_limits. Only an
 #    account with limits gets those, so the verdict is provably wrong. Free,
 #    and it beats the other two to the answer.
-# Normalized here rather than in the rate block below, which used to be the
+# Normalized here rather than in the session-part block below, which used to be the
 # first thing to look at it.
 case "$rate_raw" in ''|null) rate_raw='{}' ;; esac
 auth_cred_mtime=$(file_mtime "$AUTH_CRED_FILE")
@@ -464,7 +467,7 @@ if [ -n "$auth_plan" ]; then
   fi
 fi
 # Refresh in the background, same shape as the cost refresher: never on the
-# render path, only when the rate row is shown, only when `claude` is on
+# render path, only when the session row is shown, only when `claude` is on
 # PATH (a missing binary just leaves the cache unknown, which fails open).
 # The lock keeps five idle sessions from each spawning their own probe in
 # the same second; where flock is missing the worst case is a few redundant
@@ -540,7 +543,7 @@ responded=$(awk -v c="$cost" 'BEGIN { print (c + 0 > 0) ? "true" : "false" }')
 # at whatever it last saw. Measured across five concurrent sessions, the idle
 # ones sat 20 minutes behind the active one, showing both a stale percentage
 # and a stale reset time. Cost never had this problem because it reads a
-# SHARED on-disk cache, so rate now gets the same treatment: every session
+# SHARED on-disk cache, so the session part now gets the same treatment: every session
 # publishes the freshest reading it has, and renders the freshest reading any
 # session has published. The limits are account-wide, so the newest reading
 # from any session is the best estimate for all of them.
@@ -552,7 +555,7 @@ responded=$(awk -v c="$cost" 'BEGIN { print (c + 0 > 0) ? "true" : "false" }')
 # rolling window moves, and within one window used_percentage only ever grows,
 # so the pair orders two readings correctly with no timestamp at all.
 #
-# Skipped entirely when the rate line is hidden: that session neither reads
+# Skipped entirely when the session line is hidden: that session neither reads
 # nor writes the cache, and any session still showing the line maintains it.
 #
 # A metered session takes no part in that cache, neither reading nor writing.
@@ -632,7 +635,7 @@ if [ "$show_rate" = true ]; then
   # Publish only on a real change, so the common case (five idle sessions
   # re-rendering once a second) does no disk writes at all. Same-directory
   # mktemp + mv, since several sessions read this file concurrently and a
-  # torn read would drop the rate line's numbers.
+  # torn read would drop the session line's numbers.
   if [ -n "$rate_new" ] && [ "$rate_new" != "$rate_cache" ] && [ "$auth_plan" != none ]; then
     rate_tmp=$(mktemp "$RATE_CACHE_FILE.XXXXXX" 2>/dev/null)
     if [ -n "$rate_tmp" ]; then
@@ -647,7 +650,7 @@ fi
 [ -z "$week_pct" ] && week_pct=0
 
 # A window whose show flag is not exactly "true" (the jq call failed, or the
-# rate part is hidden and the call never ran) falls back to the old
+# session part is hidden and the call never ran) falls back to the old
 # always-render behaviour, so a broken cache can hide nothing. An omitted
 # segment simply never lands in line3; when both are omitted the row is
 # dropped by the same empty-array check every other row uses.
