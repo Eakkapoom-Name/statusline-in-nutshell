@@ -60,10 +60,17 @@ advisor_display_name() {
 advisor=""
 [ -n "$advisor_raw" ] && advisor=$(advisor_display_name "$advisor_raw")
 
-# Section visibility — the model / cost / session / workspace parts can each be hidden via
+# Section visibility: the cost / session / workspace parts can each be hidden via
 # ~/.claude/statusline.config.json (toggled by statusline-toggle.sh or the /statusline
 # skill). Fail open: a missing file, missing key, or bad value means the part is shown,
 # so the status line never silently goes blank.
+#
+# The model part is NOT one of them. It is pinned on, so line 1 always
+# renders and the status line can never collapse to no output at all.
+# That state would leave an empty row: the statusLine key stays registered
+# while parts are merely hidden, so Claude Code keeps its own footer hints
+# suppressed and the user would see nothing at all. statusline-toggle.sh
+# refuses to turn model off and pins the config key back to true each run.
 STATUSLINE_CONFIG_FILE="$HOME/.claude/statusline.config.json"
 show_model=true
 show_cost=true
@@ -84,7 +91,8 @@ if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
   IFS=$'\x1f' read -r cfg_model cfg_cost cfg_session cfg_workspace cfg_emoji < <(
     jq -r '[(.model|tostring), (.cost|tostring), (if has("session") then .session else .rate end|tostring), (.workspace|tostring), (.emoji|tostring)] | join("\u001f")' "$STATUSLINE_CONFIG_FILE" 2>/dev/null
   )
-  [ "$cfg_model" = "false" ] && show_model=false
+  # cfg_model is read by the shared jq pass above but deliberately not
+  # acted on: model is pinned on (see the comment by show_model).
   [ "$cfg_cost" = "false" ] && show_cost=false
   [ "$cfg_session" = "false" ] && show_rate=false
   [ "$cfg_workspace" = "false" ] && show_workspace=false
@@ -718,9 +726,9 @@ join_segments() {
   printf '%s' "$out"
 }
 
-# Every part hidden means no output at all. The statusLine key is still
-# registered, so Claude Code's own footer stays suppressed and the area is
-# simply empty; run `statusline-toggle.sh off` to get that footer back.
+# Line 1 always renders, because model cannot be hidden, so no combination
+# of part settings produces no output at all. To hand the whole row back to
+# Claude Code, run `statusline-toggle.sh off` instead.
 [ "$show_model" = true ] && echo "$(join_segments "${line1[@]}")"
 [ "$show_cost" = true ] && [ "${#line2[@]}" -gt 0 ] && echo "$(join_segments "${line2[@]}")"
 [ "$show_rate" = true ] && [ "${#line3[@]}" -gt 0 ] && echo "$(join_segments "${line3[@]}")"

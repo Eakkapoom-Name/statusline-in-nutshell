@@ -1,7 +1,7 @@
 ---
 name: nutshell-show
-description: Turn on one line of the nutshell status line (model, cost, session or workspace) or all four at once. Use when the user asks to show, display, enable or bring back a status line section. Emoji labels are a separate switch, handled by the nutshell-emoji skill.
-argument-hint: "[all|model|cost|session|workspace]"
+description: Turn on one line of the nutshell status line (cost, session or workspace) or all three at once. The model line is always on. Use when the user asks to show, display, enable or bring back a status line section. Emoji labels are a separate switch, handled by the nutshell-emoji skill.
+argument-hint: "[all|cost|session|workspace]"
 ---
 
 # Show a status line part
@@ -22,9 +22,11 @@ If that line above is blank, or still shows the unreplaced placeholder (a
 dollar sign followed by a zero), there is no argument.
 
 - No argument, or `all`: `bash ~/.claude/statusline-toggle.sh all on`
-- `model`, `cost`, `session` or `workspace`: `bash ~/.claude/statusline-toggle.sh <part> on`
+- `cost`, `session` or `workspace`: `bash ~/.claude/statusline-toggle.sh <part> on`
+- `model`: already on and cannot be turned off. Say so, and do not run the
+  script.
 - `emoji`: not handled here. Tell the user to use the nutshell-emoji skill.
-- Anything else: say the part is not recognised and list all, model, cost,
+- Anything else: say the part is not recognised and list all, cost,
   session, workspace.
 
 Report the script's output verbatim (`part: state` lines). No prose, no

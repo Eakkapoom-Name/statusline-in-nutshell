@@ -3,6 +3,8 @@
 #
 # The status line (statusline.sh) is divided into three parts:
 #   model  — model name / advisor / context bar               (line 1)
+#            ALWAYS ON. It cannot be hidden, and `all` skips it, so line 1
+#            always renders and the row never collapses to nothing.
 #   cost   — current session / today / week / month / all-time spend (line 2)
 #   session — usage limits: current 5-hour window + current week (line 3)
 #
@@ -12,8 +14,8 @@
 # silently switch the status line to icons the user didn't ask for.
 #
 # Usage:
-#   statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | session | workspace
-#   statusline-toggle.sh all <on|off>
+#   statusline-toggle.sh <part> <on|off|toggle>   # part = cost | session | workspace
+#   statusline-toggle.sh all <on|off>             # cost, session, workspace (not model)
 #   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle
 #   statusline-toggle.sh status
 #
@@ -24,6 +26,11 @@ set -euo pipefail
 CONFIG="$HOME/.claude/statusline.config.json"
 REFRESH="$HOME/.claude/cost_cache_refresh.sh"
 PARTS=(model cost session workspace)
+# The parts `all` acts on, and the only ones that accept on/off/toggle.
+# model is absent on purpose: pinning it on is what stops `all off` from
+# leaving an empty row that shows neither our lines nor Claude Code's own
+# footer hints (those stay suppressed while the statusLine key is set).
+TOGGLEABLE_PARTS=(cost session workspace)
 SETTINGS_FILE="$HOME/.claude/settings.json"
 # Must stay byte-identical in meaning to hooks/sync.sh's WANT and to
 # skills/nutshell-setup/SKILL.md. Three copies exist because the plugin path,
@@ -35,8 +42,8 @@ STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/statusline.sh","re
 usage() {
   cat <<'EOF'
 Usage:
-  statusline-toggle.sh <part> <on|off|toggle>   # part = model | cost | session | workspace
-  statusline-toggle.sh all <on|off>
+  statusline-toggle.sh <part> <on|off|toggle>   # part = cost | session | workspace
+  statusline-toggle.sh all <on|off>             # cost, session, workspace (not model)
   statusline-toggle.sh off                      # hand the row back to Claude Code's own footer
   statusline-toggle.sh on [--force]             # take it back, with your saved part settings
   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle; default off
@@ -46,6 +53,7 @@ Usage:
 
 Parts:
   model  model name / advisor / context bar               (line 1)
+         always on: it cannot be hidden and `all` skips it
   cost   current session / today / week / month / all-time spend (line 2)
   session  usage limits: current 5-hour window + current week (line 3)
   workspace current directory / repo / git branch          (line 4)
@@ -53,9 +61,9 @@ Parts:
 
 on / off vs show / hide:
   `off` removes the statusLine registration from settings.json, so Claude
-  Code shows its own footer again. `all off` prints nothing but keeps the
-  registration, which still suppresses that footer. Use `off` to get the
-  default back.
+  Code shows its own footer again. `all off` only hides cost, session and
+  workspace; line 1 stays, and so does the registration, so that footer
+  stays suppressed. Use `off` to get the default back.
 EOF
 }
 
@@ -144,6 +152,14 @@ ensure_config() {
     tmp0="$(mktemp "${CONFIG}.XXXXXX")"
     jq 'if has("session") then del(.rate) else .session = .rate | del(.rate) end' "$CONFIG" > "$tmp0" && mv "$tmp0" "$CONFIG"
   fi
+  # Pin "model" on. It is not toggleable, but a config written before that
+  # rule (or hand-edited) can still carry "model": false, which would hide
+  # line 1 and let `all off` leave an empty row.
+  if [ "$(jq -r '.model' "$CONFIG" 2>/dev/null)" != "true" ]; then
+    local tmpm
+    tmpm="$(mktemp "${CONFIG}.XXXXXX")"
+    jq '.model = true' "$CONFIG" > "$tmpm" && mv "$tmpm" "$CONFIG"
+  fi
   # Backfill "emoji" for configs written before emoji mode existed.
   if ! jq -e 'has("emoji")' "$CONFIG" >/dev/null 2>&1; then
     local tmp
@@ -200,7 +216,9 @@ print_status() {
 
   if is_disabled; then states+=("off"); else states+=("on"); fi
   for p in "${PARTS[@]}"; do
-    if [ "$(get_part "$p")" = "false" ]; then states+=("off"); else states+=("on"); fi
+    if [ "$p" = model ]; then states+=("on (always)")
+    elif [ "$(get_part "$p")" = "false" ]; then states+=("off")
+    else states+=("on"); fi
   done
   if [ "$(get_emoji)" = "true" ]; then states+=("on"); else states+=("off"); fi
 
@@ -293,9 +311,29 @@ case "$cmd" in
       off) val=false ;;
       *) echo "statusline-toggle: 'all' needs on|off" >&2; usage; exit 1 ;;
     esac
-    for p in "${PARTS[@]}"; do set_part "$p" "$val"; print_one "$p" "$action"; done
+    for p in "${TOGGLEABLE_PARTS[@]}"; do set_part "$p" "$val"; print_one "$p" "$action"; done
+    print_one model "on (always)"
     ;;
-  model|cost|session|workspace)
+  model)
+    require_active
+    case "${2:-}" in
+      on)
+        # Already the only possible state; report it rather than erroring.
+        print_one model "on (always)"
+        ;;
+      off|toggle)
+        echo "statusline-toggle: model cannot be hidden, it is always shown." >&2
+        echo "Line 1 is what keeps the row from collapsing to nothing: the" >&2
+        echo "statusLine key stays registered while parts are merely hidden," >&2
+        echo "so Claude Code keeps its own footer hints suppressed and you" >&2
+        echo "would be left with an empty row. To hand the whole row back to" >&2
+        echo "Claude Code, run 'statusline-toggle.sh off' instead." >&2
+        exit 1
+        ;;
+      *) echo "statusline-toggle: model only accepts on (it is always shown)" >&2; usage; exit 1 ;;
+    esac
+    ;;
+  cost|session|workspace)
     require_active
     action="${2:-}"
     case "$action" in

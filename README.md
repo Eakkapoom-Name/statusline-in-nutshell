@@ -81,12 +81,16 @@ Each command has its own description, so a plain request lands on the right
 one. If you installed with npx, drop the `nutshell:` prefix, for example
 `/nutshell-hide cost`.
 
-- `/nutshell:nutshell-show` turns all four lines on. `show all` does the
-  same.
-- `/nutshell:nutshell-hide` turns all four lines off, as does `hide all`.
-  This leaves the status line blank, so the skill asks you to confirm first.
-- `/nutshell:nutshell-show model` turns the model line on without touching
-  the others. The same works for `cost`, `session` and `workspace`.
+- `/nutshell:nutshell-show` turns the cost, session and workspace lines on.
+  `show all` does the same.
+- `/nutshell:nutshell-hide` turns those three off, as does `hide all`.
+  Line 1 stays: the model line cannot be hidden, so the status line never
+  goes blank and no confirmation is needed. Hiding every part would
+  otherwise leave an empty row, because the `statusLine` registration
+  stays in place and keeps Claude Code's own footer hints suppressed. Use
+  `/nutshell:nutshell-inactive` to hand the whole row back instead.
+- `/nutshell:nutshell-show cost` turns the cost line on without touching
+  the others. The same works for `session` and `workspace`.
 - `/nutshell:nutshell-hide cost` turns the cost line off without touching
   the others.
 - `/nutshell:nutshell-hide session` turns the rate-limit line off. It is
@@ -119,7 +123,7 @@ one. If you installed with npx, drop the `nutshell:` prefix, for example
   delete it and `nutshell-active` refuses to overwrite it. Use
   `/nutshell:nutshell-active --force` to take over deliberately.
 - `/nutshell:nutshell-status` prints the current on/off state of the status
-  line itself and of model, cost, session, workspace and emoji.
+  line itself and of model (always on), cost, session, workspace and emoji.
 - `/nutshell:nutshell-reset-all-time-cost` wipes the all-time cost counter
   for good. Today, week and month are untouched. This needs `ccusage`, and
   the skill asks for confirmation first because there is no undo.
