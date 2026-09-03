@@ -439,6 +439,12 @@ case "$cmd" in
             "$HOME/.claude/.rate_cache.json" \
             "$HOME/.claude/.auth_cache.json" \
             "$HOME/.claude/.auth_cache.json.lock"
+      # Extra per-source ledgers (.cost_ledger_<source>.json), written by
+      # other tools and folded into the cost windows by the refresher. A
+      # glob, not a fixed path, since the source names are not ours to know.
+      # Unquoted on purpose so it expands; with no match the literal pattern
+      # reaches rm -f, which ignores a path that does not exist.
+      rm -f "$HOME/.claude/.cost_ledger_"*.json
     fi
     if [ "$purge" = true ]; then
       echo "uninstalled: removed status line registration, statusline.sh, statusline-toggle.sh, and cost_cache_refresh.sh, and purged config/cost/lock files."
