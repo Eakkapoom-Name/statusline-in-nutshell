@@ -11,7 +11,7 @@
 exec 2>/dev/null
 
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-SRC="$ROOT/skills/nutshell/scripts"
+SRC="$ROOT/skills/nutshell-setup/scripts"
 DEST="$HOME/.claude"
 
 [ -d "$SRC" ] || exit 0
