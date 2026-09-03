@@ -106,7 +106,8 @@ one. If you installed with npx, drop the `nutshell:` prefix, for example
   the `statusLine` registration from `settings.json`, so Claude Code shows
   its own footer again, including the keyboard hints it hides while a custom
   status line is active. This is not the same as hiding every line, which
-  keeps the registration and prints a blank row. The choice is remembered,
+  prints nothing but keeps the registration, so those hints stay hidden and
+  the footer area is simply empty. The choice is remembered,
   so the sync hook will not put the status line back at the next session
   start. While inactive, `show`, `hide`, `emoji` and `reset-all-time-cost`
   refuse to run, since nothing they change would be visible; `status`,

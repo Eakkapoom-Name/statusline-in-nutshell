@@ -17,7 +17,8 @@ bash ~/.claude/statusline-toggle.sh off
 
 This is not the same as hiding: inactive removes the registration from
 settings.json so Claude Code shows its own footer, while the nutshell-hide
-skill keeps the registration and prints a blank row. The choice is
+skill keeps the registration, which leaves that footer suppressed even when
+every part is hidden. The choice is
 remembered, so the sync hook will not put the status line back at the next
 session start.
 

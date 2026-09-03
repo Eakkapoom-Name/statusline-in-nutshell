@@ -53,8 +53,9 @@ Parts:
 
 on / off vs show / hide:
   `off` removes the statusLine registration from settings.json, so Claude
-  Code shows its own footer again. `all off` keeps the registration and
-  prints a blank row instead. Use `off` to get the default back.
+  Code shows its own footer again. `all off` prints nothing but keeps the
+  registration, which still suppresses that footer. Use `off` to get the
+  default back.
 EOF
 }
 
@@ -100,9 +101,10 @@ current_statusline_command() {
 # Add or remove settings.json's statusLine key. Removing it is what makes
 # Claude Code fall back to its own footer: it suppresses the built-in
 # keyboard hints only while a custom status line is configured, so hiding
-# every part is not the same thing (that leaves the key set and prints a
-# blank row). settings.json is backed up first, and the rewrite is a
-# same-directory mktemp + mv so a reader never catches a half-written file.
+# every part is not the same thing (that leaves the key set, so the footer
+# stays suppressed and the area is simply empty). settings.json is backed
+# up first, and the rewrite is a same-directory mktemp + mv so a reader
+# never catches a half-written file.
 set_statusline_key() {
   local mode="$1" tmp filter
   [ -f "$SETTINGS_FILE" ] || { [ "$mode" = "off" ] && return 0; printf '{}\n' > "$SETTINGS_FILE"; }

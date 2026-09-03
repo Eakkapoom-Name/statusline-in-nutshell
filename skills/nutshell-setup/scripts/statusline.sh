@@ -718,15 +718,12 @@ join_segments() {
   printf '%s' "$out"
 }
 
+# Every part hidden means no output at all. The statusLine key is still
+# registered, so Claude Code's own footer stays suppressed and the area is
+# simply empty; run `statusline-toggle.sh off` to get that footer back.
 [ "$show_model" = true ] && echo "$(join_segments "${line1[@]}")"
 [ "$show_cost" = true ] && [ "${#line2[@]}" -gt 0 ] && echo "$(join_segments "${line2[@]}")"
 [ "$show_rate" = true ] && [ "${#line3[@]}" -gt 0 ] && echo "$(join_segments "${line3[@]}")"
 [ "$show_workspace" = true ] && [ "${#line4[@]}" -gt 0 ] && echo "$(join_segments "${line4[@]}")"
 
-# Every section hidden -> print one empty line so the status line area
-# stays reserved instead of vanishing entirely (no output at all).
-if [ "$show_model" = false ] && [ "$show_cost" = false ] && [ "$show_rate" = false ] \
-   && [ "$show_workspace" = false ]; then
-  echo ""
-fi
 exit 0

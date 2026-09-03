@@ -34,9 +34,10 @@ exactly "Done." or "Abort." and nothing else.
 - Anything else: say the part is not recognised and list all, model, cost,
   session, workspace.
 
-Hiding is not the same as inactive: hiding keeps the registration and prints
-a blank row, while the nutshell-inactive skill removes the registration so
-Claude Code shows its own footer.
+Hiding is not the same as inactive: hiding every part prints nothing but
+keeps the registration, which still suppresses Claude Code's own footer,
+while the nutshell-inactive skill removes the registration and brings that
+footer back.
 
 Report the script's output verbatim. No prose, no mention of unchanged
 parts. Never hand-edit `statusline.config.json` or `settings.json`; the
