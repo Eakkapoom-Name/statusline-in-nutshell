@@ -58,28 +58,20 @@ commands read `/nutshell:nutshell-hide` rather than
 first, then install `nutshell@statusline-in-nutshell`. Your installed
 scripts, toggle settings and cost history are untouched by the swap.
 
-**npx (no marketplace).** This path installs the skills directly and gives
-you flat commands such as `/nutshell-show`, `/nutshell-hide cost` and
-`/nutshell-status` instead of `/nutshell:nutshell-show`.
-
-```bash
-npx skills add Eakkapoom-Name/statusline-in-nutshell --agent claude-code
-```
-
-There is no background hook on this path. The first command you run installs
-everything, because every skill checks for the scripts and calls
-`/nutshell-setup` when they are missing. After that, an update to this
-repository will not reach your machine until you run `/nutshell-setup` again.
-If you want updates to land automatically, use the marketplace install
-instead.
+The marketplace is the only supported install. An `npx skills add` install
+was supported through 0.3.0 and is discontinued; if you have one, run
+`/nutshell-uninstall`, then `npx skills remove nutshell-setup
+nutshell-status nutshell-show nutshell-hide nutshell-emoji nutshell-active
+nutshell-inactive nutshell-reset-all-time-cost nutshell-uninstall`, and
+install from the marketplace instead. Your toggle settings and cost history
+are kept.
 
 ## Usage
 
 Type the command for what you want, or just describe it in plain language:
 "hide the cost line", "show everything", "turn on emoji", "what's showing?".
 Each command has its own description, so a plain request lands on the right
-one. If you installed with npx, drop the `nutshell:` prefix, for example
-`/nutshell-hide cost`.
+one.
 
 - `/nutshell:nutshell-show` turns the cost, session and workspace lines on.
   `show all` does the same.
@@ -130,8 +122,8 @@ one. If you installed with npx, drop the `nutshell:` prefix, for example
 - `/nutshell:nutshell-setup` installs or repairs the scripts and the
   `statusLine` registration. It is also the fix when something looks wrong:
   it re-copies any script that differs from the bundled one and restores the
-  registration. On the marketplace path the hook already does this at every
-  session start; on the npx path it is what picks up an update.
+  registration. The `SessionStart` hook already does this at every session
+  start, so this is the mid-session repair, not something you normally run.
 - `/nutshell:nutshell-uninstall` removes the status line and the installed
   scripts. See the Uninstall section below.
 
@@ -160,9 +152,9 @@ one. If you installed with npx, drop the `nutshell:` prefix, for example
 - The 1-second refresh interval is deliberate. Claude Code only re-runs a
   status line on assistant messages and a few UI events, so the advisor and
   cost segments would otherwise sit on old values while the session is
-  idle. The timer re-runs the script on a clock instead. On the plugin path
-  the sync hook restores this value at every session start; to opt out for
-  good, install via `npx` instead or edit `hooks/sync.sh`.
+  idle. The timer re-runs the script on a clock instead. The sync hook
+  restores this value at every session start, so opting out for good means
+  editing `hooks/sync.sh`.
 - Your own state is never touched by the sync step: the config file
   `statusline.config.json`, the cost files (`.cost_cache.json`,
   `.cost_ledger.json`, `.cost_baseline.json`), the rate-limit cache
@@ -212,19 +204,11 @@ one. If you installed with npx, drop the `nutshell:` prefix, for example
 
 ## Uninstall
 
-Run `/nutshell:nutshell-uninstall`, or `/nutshell-uninstall` on the npx install.
-It confirms first, then cleans up.
-
-If you installed from the marketplace, remove the `nutshell` plugin from the
-`/plugin` menu first. Otherwise its `SessionStart` hook reinstalls the
-scripts at the next session.
-
-If you installed with npx, run the uninstall first, then remove the skills
-themselves:
-
-```bash
-npx skills remove nutshell-setup nutshell-status nutshell-show nutshell-hide nutshell-emoji nutshell-active nutshell-inactive nutshell-reset-all-time-cost nutshell-uninstall
-```
+Run `/nutshell:nutshell-uninstall`. It confirms first, then cleans up. Do
+this before removing the plugin, since removing it takes the command with
+it. Afterwards, remove the `nutshell` plugin from the `/plugin` menu:
+otherwise its `SessionStart` hook reinstalls the scripts at the next
+session.
 
 By default the uninstall keeps `statusline.config.json`, your cost history,
 the rate-limit cache and the auth cache. Ask for a purge, or pass `--purge`,

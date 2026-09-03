@@ -33,9 +33,10 @@ PARTS=(model cost session workspace)
 TOGGLEABLE_PARTS=(cost session workspace)
 SETTINGS_FILE="$HOME/.claude/settings.json"
 # Must stay byte-identical in meaning to hooks/sync.sh's WANT and to
-# skills/nutshell-setup/SKILL.md. Three copies exist because the plugin path,
-# the npx path, and this script can each be the one that registers the status
-# line; if they disagree they rewrite each other on every session start.
+# skills/nutshell-setup/SKILL.md. Three copies exist because the sync hook,
+# the setup skill, and this script can each be the one that registers the
+# status line; if they disagree they rewrite each other on every session
+# start.
 STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/statusline.sh","refreshInterval":1}'
 
 

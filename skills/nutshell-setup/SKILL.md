@@ -5,9 +5,11 @@ description: Install or repair the nutshell status line by copying the bundled s
 
 # Install the nutshell status line
 
-This skill is the only one that installs. Every other nutshell status line
-skill checks that `~/.claude/statusline-toggle.sh` exists and invokes this
-one when it does not.
+The `SessionStart` hook installs the scripts at every session start, so this
+skill is the mid-session repair: it is what the other nutshell status line
+skills invoke when they find `~/.claude/statusline-toggle.sh` missing, and
+what you run yourself when the status line looks wrong without waiting for a
+restart.
 
 ## What to do
 
