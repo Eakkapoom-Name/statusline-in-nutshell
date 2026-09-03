@@ -4,9 +4,9 @@
   "description": "Marketplace for the statusline plugin: a toggleable Claude Code status line with cost and rate-limit tracking.",
   "plugins": [
     {
-      "name": "nutshell-statusline",
+      "name": "nutshell",
       "source": "./",
-      "description": "Toggleable Claude Code status line with cost and rate-limit tracking."
+      "description": "Toggleable Claude Code status line with cost and rate-limit tracking, one command per action."
     }
   ]
 }

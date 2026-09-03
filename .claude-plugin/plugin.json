@@ -1,9 +1,17 @@
 {
-  "name": "nutshell-statusline",
-  "version": "0.2.9",
-  "description": "Toggleable Claude Code status line: model/context, cost windows, rate limits, emoji labels. Sections switch on/off via /nutshell-statusline:nutshell.",
-  "author": { "name": "Eakkapoom-Name" },
+  "name": "nutshell",
+  "version": "0.3.0",
+  "description": "Toggleable Claude Code status line: model/context, cost windows, rate limits, workspace, emoji labels. One command per action: /nutshell:nutshell-show, nutshell-hide, nutshell-emoji, nutshell-active, nutshell-inactive, nutshell-status, nutshell-setup, nutshell-reset-all-time-cost, nutshell-uninstall.",
+  "author": {
+    "name": "Eakkapoom-Name"
+  },
   "repository": "https://github.com/Eakkapoom-Name/statusline-in-nutshell",
   "license": "MIT",
-  "keywords": ["statusline", "status-line", "cost", "rate-limit", "toggle"]
+  "keywords": [
+    "statusline",
+    "status-line",
+    "cost",
+    "rate-limit",
+    "toggle"
+  ]
 }
