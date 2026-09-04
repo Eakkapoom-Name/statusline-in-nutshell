@@ -408,7 +408,14 @@ cmd_uninstall() {
   # so anything unexpected in there (a file a future version writes,
   # something the user put there) survives instead of being deleted by a
   # recursive sweep this script cannot audit.
-  rmdir "$NUT_BIN_DIR" "$NUT_STATE_DIR" "$NUT_LOCK_DIR" "$NUT_DIR" 2>/dev/null
+  #
+  # `|| true` because a non-empty directory is the NORMAL outcome here: a
+  # non-purge uninstall keeps config.json and everything under state/, so
+  # this rmdir always fails, and under `set -e` that failure exited the
+  # script with status 1 right after printing the success message. The
+  # nutshell-uninstall skill shells out to this script, so a successful
+  # uninstall read as a failed one.
+  rmdir "$NUT_BIN_DIR" "$NUT_STATE_DIR" "$NUT_LOCK_DIR" "$NUT_DIR" 2>/dev/null || true
   exit 0
 }
 
