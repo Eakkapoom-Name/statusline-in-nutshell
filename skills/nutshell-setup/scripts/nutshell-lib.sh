@@ -124,8 +124,10 @@ nut_write_atomic() {
 
 # nut_write_atomic, but only when $1 is a non-empty JSON object. Protects a
 # ledger or cache from being truncated, or replaced with garbage, when an
-# upstream jq step silently produced empty or malformed output. On failure
-# the existing file is left untouched.
+# upstream jq step silently produced empty or malformed output: rejected
+# content leaves the existing file untouched and returns 0 (there was
+# nothing to write). Only a failed mktemp or rename returns 1, which is
+# what `reset-all-time` reads as "the reset did not land".
 nut_write_json_object() {
   local content="$1" target="$2" tmp
   tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
@@ -134,18 +136,19 @@ nut_write_json_object() {
     mv "$tmp" "$target" 2>/dev/null
   else
     rm -f "$tmp" 2>/dev/null
-    return 1
   fi
 }
 
 # Rewrite JSON file $1 in place through jq: the remaining arguments are
 # passed to jq as-is (options, then the filter), the file is appended.
 # Atomic like nut_write_atomic. Returns 1 with nothing changed on failure.
+# jq's own diagnostics are left on stderr; a caller that wants silence adds
+# its own `2>/dev/null`.
 nut_jq_edit() {
   local target="$1" tmp
   shift
   tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
-  if jq "$@" "$target" > "$tmp" 2>/dev/null && mv "$tmp" "$target" 2>/dev/null; then
+  if jq "$@" "$target" > "$tmp" && mv "$tmp" "$target" 2>/dev/null; then
     return 0
   fi
   rm -f "$tmp" 2>/dev/null
@@ -222,7 +225,7 @@ nut_settings_is_object() {
 nut_settings_register() {
   [ -f "$NUT_SETTINGS" ] || printf '{}\n' > "$NUT_SETTINGS" 2>/dev/null
   nut_settings_is_object || return 1
-  nut_jq_edit "$NUT_SETTINGS" --argjson v "$NUT_STATUSLINE_VALUE" '.statusLine = $v' || return 2
+  nut_jq_edit "$NUT_SETTINGS" --argjson v "$NUT_STATUSLINE_VALUE" '.statusLine = $v' 2>/dev/null || return 2
 }
 
 # Remove the statusLine key. Same return codes; a missing file is 0, there
@@ -233,7 +236,7 @@ nut_settings_register() {
 nut_settings_unregister() {
   [ -f "$NUT_SETTINGS" ] || return 0
   nut_settings_is_object || return 1
-  nut_jq_edit "$NUT_SETTINGS" 'del(.statusLine)' || return 2
+  nut_jq_edit "$NUT_SETTINGS" 'del(.statusLine)' 2>/dev/null || return 2
 }
 
 # ---------------------------------------------------------------------------

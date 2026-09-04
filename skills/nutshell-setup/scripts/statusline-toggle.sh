@@ -92,7 +92,7 @@ ensure_config() {
     printf '%s\n' "$DEFAULT_CONFIG" > "$NUT_CONFIG"
     return 0
   fi
-  if jq -e 'has("rate") or .model != true or (has("emoji") | not) or (has("workspace") | not) or (has("disabled") | not)' \
+  if jq -e 'has("rate") or (.model | tostring) != "true" or (has("emoji") | not) or (has("workspace") | not) or (has("disabled") | not)' \
        "$NUT_CONFIG" >/dev/null 2>&1; then
     nut_jq_edit "$NUT_CONFIG" '
       (if has("rate") then (if has("session") then del(.rate) else .session = .rate | del(.rate) end) else . end)

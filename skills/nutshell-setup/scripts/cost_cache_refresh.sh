@@ -170,9 +170,7 @@ result=$(printf '%s' "$combined" | jq \
     all_time_cost: ([to_entries[] | (.value - ($baseline[.key] // 0)) | select(. > 0)] | add // 0)
   }')
 
+# Last on purpose: the script's exit status is this write's, and
+# `reset-all-time` reports the reset as failed when it is non-zero.
 cache_out=$(jq -n --argjson ts "$(date +%s)" --argjson r "$result" '{updated_at: $ts} + $r')
 nut_write_json_object "$cache_out" "$NUT_COST_CACHE"
-
-# Always 0, like every background job here: nothing awaits this except
-# `reset-all-time`, which reports the reset as done once the run completes.
-exit 0

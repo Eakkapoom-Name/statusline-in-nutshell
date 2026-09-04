@@ -438,10 +438,11 @@ read_auth_verdict() {
 
 # Re-probe in the background, same shape as the cost refresher: never on the
 # render path, only when the session row is shown, only when `claude` is on
-# PATH (a missing binary leaves the verdict unknown, which fails open).
+# PATH and the probe script is installed (either missing leaves the verdict
+# unknown, which fails open, rather than forking a doomed job every render).
 spawn_auth_probe_if_stale() {
   if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ "$auth_age" -ge "$AUTH_CACHE_MAX_AGE" ] \
-     && command -v claude >/dev/null 2>&1; then
+     && command -v claude >/dev/null 2>&1 && [ -f "$NUT_BIN_DIR/auth_cache_refresh.sh" ]; then
     nut_spawn bash "$NUT_BIN_DIR/auth_cache_refresh.sh" "$session_id"
   fi
 }
