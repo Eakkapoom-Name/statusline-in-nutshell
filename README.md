@@ -4,8 +4,10 @@ A four-line status line for Claude Code. Line 1 shows the model, effort
 level, advisor model and context usage. Line 2 shows your spend across
 several time windows. Line 3 shows how much of your rate limits you have
 used. Line 4 shows where you are: the directory, the repository and the git
-branch. Each line can be switched on or off with a slash command, so you
-never have to edit JSON by hand.
+branch. Lines 2, 3 and 4 can each be switched on or off with a slash
+command, so you never have to edit JSON by hand. Line 1 is always on, which
+is what keeps the row from going blank; hand the whole row back to Claude
+Code instead when you want it gone.
 
 ```
 model: Sonnet 5 (high) | advisor: Opus 5 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
@@ -47,9 +49,9 @@ Then install the plugin:
 /plugin install nutshell@statusline-in-nutshell
 ```
 
-Restart your session. The hook copies the scripts into `~/.claude/nutshell/bin/` and
-registers the status line in the background. There is nothing else to do;
-the status line simply appears.
+Restart your session. The hook copies the scripts into
+`~/.claude/nutshell/bin/` and registers the status line for you. There is
+nothing else to do; the status line simply appears.
 
 If you installed an earlier version, the plugin was called
 `nutshell-statusline`. Version 0.3.0 renamed it to `nutshell` so the
@@ -60,9 +62,10 @@ scripts, toggle settings and cost history are untouched by the swap.
 
 Version 0.3.1 moved everything this plugin installs into one directory,
 `~/.claude/nutshell/`, instead of thirteen loose files in `~/.claude/`. The
-move happens by itself at your next session start: the scripts, your toggle
-settings and your whole cost history are moved, not recreated, and the
-`statusLine` registration is repointed at the new script path. Nothing is
+move happens by itself at your next session start: your toggle settings and
+your whole cost history are moved, not recreated, the scripts are installed
+fresh from the plugin and the old copies deleted once the new ones are in
+place, and the `statusLine` registration is repointed at the new path. Nothing is
 asked of you, with one exception. If another tool of yours writes an extra
 cost ledger, that file is moved from `~/.claude/.cost_ledger_<source>.json`
 to `~/.claude/nutshell/state/ledger_<source>.json`, and only the new path is
@@ -143,8 +146,11 @@ one.
   `statusLine` registration. It is also the fix when something looks wrong:
   it runs the same sync script as the `SessionStart` hook, which re-copies
   any file that differs from the bundled one and restores the registration.
-  The hook already does this at every session start, so this is the
-  mid-session repair, not something you normally run.
+  The registration step is skipped, and reported rather than forced, in
+  three cases: the status line is inactive, `settings.json` registers
+  someone else's status line, or `settings.json` is not a JSON object. The
+  hook already does this at every session start, so this is the mid-session
+  repair, not something you normally run.
 - `/nutshell:nutshell-uninstall` removes the status line and the installed
   scripts. See the Uninstall section below.
 
@@ -157,6 +163,12 @@ one.
   figure comes straight from Claude Code's own status line payload. With it,
   a background job also fills in today, week, month and all-time cost, and
   `nutshell-reset-all-time-cost` becomes available.
+- `claude` on your `PATH`, optional. The background probe that decides
+  whether your account has rate limits at all runs `claude auth status`.
+  Without it the verdict never lands, and line 3 then falls back on what it
+  can see: a metered session still omits the rows once it has had a
+  response, but until then it can show a 0% row it should have left out,
+  unless it was launched with one of the environment variables below.
 
 ## What gets written where
 
@@ -182,26 +194,43 @@ single `nutshell/` entry rather than thirteen loose files:
   elsewhere.
 - The status line is registered under the `statusLine` key in
   `~/.claude/settings.json`, with `refreshInterval: 1`. Only that one key
-  is touched, through a temp file and a rename. If `settings.json` is not
-  a JSON object, it is left exactly as it is and registration is skipped
+  is touched, through a temp file and a rename; a `settings.json` that does
+  not exist yet is created as `{}` first. If the file exists but is not a
+  JSON object, it is left exactly as it is and registration is skipped
   until you fix it.
 - The 1-second refresh interval is deliberate. Claude Code only re-runs a
   status line on assistant messages and a few UI events, so the advisor and
   cost segments would otherwise sit on old values while the session is
   idle. The timer re-runs the script on a clock instead. The sync hook
   restores this value at every session start, so opting out for good means
-  editing `hooks/sync.sh`.
+  editing `NUT_STATUSLINE_VALUE` in
+  `skills/nutshell-setup/scripts/nutshell-lib.sh`, the one place the
+  registration is written down.
 - Cost figures are refreshed on a `Stop` hook, which fires when Claude
   finishes responding. That is when the number can actually have moved, so
   today, week, month and all-time land within a few seconds of a turn instead
   of waiting out the 5 minute cache the status line falls back on. The hook
   starts the same background job the status line starts and returns at once,
   so it never adds latency to a turn, and it skips entirely while the status
-  line is inactive, while the cost line is hidden, or within 10 seconds of the
-  last refresh. The refresh itself only rescans from the last day already
-  recorded in `state/cost_ledger.json` onward, since earlier days can no longer
-  change: on a 447 MB transcript directory that roughly halves the work. A
-  missing or unreadable ledger falls back to a full scan.
+  line is inactive, while the cost line is hidden, within 10 seconds of the
+  last refresh, or when `jq`, `ccusage` or the refresher itself is missing.
+  The refresh itself only rescans from the last day already recorded in
+  `state/cost_ledger.json` onward, since earlier days can no longer change:
+  on a 447 MB transcript directory that roughly halves the work. A missing
+  or unreadable ledger falls back to a full scan, and so does a reset.
+- That ledger is why the figures never shrink. Claude Code prunes old
+  transcript logs on a rolling window, and `ccusage` only sees logs that
+  still exist, so a day's spend would otherwise vanish from month and
+  all-time once its log went. The ledger records the highest figure ever
+  seen for each day and the windows are summed from it, so a day can only
+  ever go up. It protects history from its first run forward, not before.
+  The week runs Sunday to Saturday, the month from the 1st, and today rolls
+  over at midnight, all on your local clock.
+- The advisor name on line 1 is translated from the bare alias in
+  `settings.json` through a small built-in table, since nothing exposes the
+  resolved name at runtime. It covers `opus`, `sonnet`, `fable` and `haiku`
+  and will drift as those aliases point at new releases; an alias it does
+  not know is printed as written.
 - Your own state is never touched by the sync step: `config.json` and
   everything under `state/`. Only the toggle script writes the config, only
   the cost refresher writes the cost files, only the status line itself
@@ -214,12 +243,16 @@ single `nutshell/` entry rather than thirteen loose files:
   keys with numeric values count. Meant for spend `ccusage` cannot see, for
   example a local OpenRouter proxy recording the credits it was actually
   charged.
-- `state/rate_cache.json` is shared between your subscription sessions. Claude
+- `state/rate_cache.json` is shared between your subscription sessions, and
+  it is keyed by nothing, so two different subscription accounts on one
+  machine blend their readings. Claude
   Code only refreshes a session's rate-limit numbers when that session gets
   an API response, so an idle tab would otherwise show a reading from hours
   ago. Each session publishes the freshest numbers it has seen and displays
-  the freshest any session has published. A window whose reset time has
-  passed is dropped rather than shown.
+  the freshest any session has published. A reading whose reset time has
+  passed is discarded rather than shown: that window falls back to 0% with
+  no reset time, which is also the moment Claude Code drops it from its own
+  payload.
 - The rate row follows your plan. Pro and Max show both the 5-hour and the
   weekly window, a Team seat with only a 5-hour limit shows just that one,
   and API-key, Bedrock, Vertex and Foundry billing get no rate row at all.
@@ -233,8 +266,11 @@ single `nutshell/` entry rather than thirteen loose files:
   entirely, reading and writing: its own payload still renders, but it can
   neither show your subscription's percentages nor overwrite them. Until its
   first probe lands, roughly a render or two, a session that exports
-  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` is
-  treated as metered on that evidence alone.
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,
+  `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` is treated as
+  metered on that evidence alone. `CLAUDE_CODE_USE_FOUNDRY` is not in that
+  list, so a Microsoft Foundry session waits for the probe like any other
+  and can show a 0% row until it lands.
 - A `/login` mid-session is noticed too: the verdict is re-taken when
   `~/.claude/.credentials.json` changes (every login, logout and token refresh
   rewrites it), and the instant a session marked metered receives rate limits
@@ -256,7 +292,9 @@ otherwise its `SessionStart` hook reinstalls the scripts at the next
 session.
 
 By default the uninstall keeps `config.json`, your cost history, the
-rate-limit cache and the auth cache. Ask for a purge, or pass `--purge`, to
+rate-limit cache and the auth cache. It still removes the three lock files,
+any loose scripts left by a pre-0.3.1 install, and the `disabled` flag in
+the config it keeps, so a later reinstall does not come back inactive. Ask for a purge, or pass `--purge`, to
 wipe those too: the whole `~/.claude/nutshell/` directory goes, including any
 `ledger_<source>.json` written by another tool, along with the four `.bak`
 files that versions before 0.3.1 left in `~/.claude/`. Only the `statusLine`
@@ -268,7 +306,10 @@ A non-purge uninstall keeps those `.bak` files on purpose:
 `settings.json.bak` may be your only copy of the settings you had before
 installing. Nothing writes a new one, so once they are gone they stay gone.
 
-If you would rather not go through the skill, the manual fallback is:
+If you would rather not go through the skill, this is the rough equivalent
+of a purge. Remove the plugin from `/plugin` afterwards, or the hook puts
+everything back at the next session start. It does not sweep the files a
+pre-0.3.1 install left loose in `~/.claude/`; the skill does.
 
 ```bash
 rm -r ~/.claude/nutshell
