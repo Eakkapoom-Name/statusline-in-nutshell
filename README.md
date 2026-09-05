@@ -49,15 +49,22 @@ Emoji mode replaces the text labels with icons:
 
 ## Notice
 
-- Both macOS and WSL both still under development. Some functions may be incompatible. On macOS, for example, the cost
-  line only reports the current session, so today, week, month and all-time can
-  stay empty.
+- macOS and WSL are both still under development. Some functions may be
+  incompatible. On macOS, for example, the cost line only reports the current
+  session, so today, week, month and all-time can stay empty.
 
 ## Requirement
 
 - **`jq`**\
   Everything here reads and writes its JSON through it.
   The toggle script stops with a clear error if it is missing.
+- **`ccusage`**, optional\
+  Fills in today, week, month and all-time cost, and makes
+  `nutshell-reset-all-time-cost` available. Without it, only the current
+  session's cost shows.
+- **`claude` on your `PATH`**, optional\
+  Runs the background probe that decides whether your account has rate limits
+  at all. Without it, line 3 can show a 0% row it should have left out.
 
 ## Install
 
@@ -236,7 +243,7 @@ on), cost, session, workspace and emoji.
 ### /nutshell:nutshell-reset-all-time-cost
 
 Wipes the all-time cost counter for good. Today, week and month are untouched.
-Needs `ccusage`, and asks for confirmation first because there is no undo.
+It asks for confirmation first because there is no undo.
 
 ```bash
 /nutshell:nutshell-reset-all-time-cost
