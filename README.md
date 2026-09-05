@@ -1,6 +1,6 @@
 # statusline-in-nutshell
 
-A customized status line for Claude Code. It replaces the default footer with
+A customized statusline for Claude Code. It replaces the default footer with
 four lines of your own. Line 1 shows the model, effort level, advisor model and
 context usage. Line 2 shows your spend across several time windows. Line 3
 shows how much of your rate limits you have used. Line 4 shows where you are:
