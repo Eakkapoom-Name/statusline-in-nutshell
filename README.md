@@ -47,30 +47,17 @@ Emoji mode replaces the text labels with icons:
   the scripts and the registration.
 - [`/nutshell:nutshell-uninstall`](#nutshellnutshell-uninstall) removes both.
 
-## Requirements
+## Notice
 
-- **Ubuntu.** macOS and WSL are under development. Treat them as experimental
-  for now: some functions may be incompatible. On macOS, for example, the cost
+- Both macOS and WSL both still under development. Some functions may be incompatible. On macOS, for example, the cost
   line only reports the current session, so today, week, month and all-time can
   stay empty.
-- **`bash`.**
-- **`jq`.** Required. Everything here reads and writes its JSON through it.
+
+## Requirement
+
+- **`jq`**\
+  Everything here reads and writes its JSON through it.
   The toggle script stops with a clear error if it is missing.
-- **`ccusage`.** Optional.
-  - Session cost still shows without it, because that figure comes straight
-    from Claude Code's own status line payload.
-  - With it, a background job also fills in today, week, month and all-time
-    cost, and `nutshell-reset-all-time-cost` becomes available.
-- **`claude` on your `PATH`.** Optional.
-  - The background probe that decides whether your account has rate limits at
-    all runs `claude auth status`. Pro and Max get both the 5-hour and the
-    weekly window, a Team seat with only a 5-hour limit gets that one, and
-    API-key, Bedrock, Vertex and Foundry billing get no rate row.
-  - Without it the verdict never lands, and line 3 falls back on what it can
-    see: a metered session still omits the rows once it has had a response, but
-    until then it can show a 0% row it should have left out, unless it was
-    launched with `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
-    `ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX`.
 
 ## Install
 
@@ -314,40 +301,6 @@ left loose in `~/.claude/`; the skill does.
 ```bash
 rm -r ~/.claude/nutshell
 jq 'del(.statusLine)' ~/.claude/settings.json > ~/.claude/settings.json.new && mv ~/.claude/settings.json.new ~/.claude/settings.json
-```
-
-## Layout
-
-```
-├── hooks/
-│   ├── cost-refresh.sh
-│   ├── hooks.json
-│   └── sync.sh
-└── skills/
-    ├── nutshell-active/
-    │   └── SKILL.md
-    ├── nutshell-emoji/
-    │   └── SKILL.md
-    ├── nutshell-hide/
-    │   └── SKILL.md
-    ├── nutshell-inactive/
-    │   └── SKILL.md
-    ├── nutshell-reset-all-time-cost/
-    │   └── SKILL.md
-    ├── nutshell-setup/
-    │   ├── scripts/
-    │   │   ├── auth_cache_refresh.sh
-    │   │   ├── cost_cache_refresh.sh
-    │   │   ├── nutshell-lib.sh
-    │   │   ├── statusline-toggle.sh
-    │   │   └── statusline.sh
-    │   └── SKILL.md
-    ├── nutshell-show/
-    │   └── SKILL.md
-    ├── nutshell-status/
-    │   └── SKILL.md
-    └── nutshell-uninstall/
-        └── SKILL.md
 ```
 
 ## License
