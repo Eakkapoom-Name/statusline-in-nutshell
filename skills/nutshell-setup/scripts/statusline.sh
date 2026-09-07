@@ -454,15 +454,40 @@ spawn_auth_probe_if_stale() {
 # Rate limits are PER-SESSION payload state, refreshed only from this
 # session's own API responses, so an idle tab freezes at whatever it last
 # saw (measured across five concurrent sessions: the idle ones sat 20
-# minutes behind). The limits are account-wide, so every session publishes
-# the freshest reading it has and renders the freshest reading any session
-# has published, the way cost has always read a shared cache.
+# minutes behind). The limits are account-wide, so the session that just
+# received a response publishes its reading and every other session renders
+# it, the way cost has always read a shared cache.
 #
-# Freshness is ordered by (resets_at, used_percentage), both "higher is
-# fresher", and deliberately NOT by a wall-clock stamp: the payload carries
-# no indication of when it was measured, so stamping it with `now` would let
-# a stale idle tab overwrite a fresh reading. resets_at advances when the
-# rolling window moves, and within one window used_percentage only grows.
+# Which reading is freshest is decided by WHO publishes, never by comparing
+# the numbers. The payload carries no measurement time, and used_percentage
+# is not monotonic inside a window: on 2026-09-07 the weekly reading went
+# 20, 30, 33 and then 15 under one resets_at, and the earlier rule ("higher
+# is fresher, a percentage only grows within a window") pinned the cache at
+# 33 for a day while every live payload said 15. So the cache remembers,
+# per session, a signature of the payload that session last saw: its
+# total_cost_usd, which moves on every API response and on nothing else.
+# Not the windows themselves: Claude Code drops a window from the payload
+# the moment its resets_at passes, in idle tabs too, and that must not read
+# as a response. A session whose signature changed since then has just had
+# a response, so its reading is the newest on the machine and overwrites
+# the cache, up or down. A session whose signature is unchanged is idle: it
+# renders the cache and writes nothing. A session the map does not know
+# yet only records its signature, it does not publish, so an upgrade or a
+# lost cache cannot make every idle tab republish a stale reading at once;
+# its next response publishes. The price is deliberate: a brand-new
+# session renders the previous session's reading for its first turn, one
+# response behind at most. Only a cost that GREW counts as a response: a
+# cost that fell has been reset (/clear) and says nothing about the
+# windows, so it is recorded, not published. Old sessions are pruned from
+# the map after a week, on a publish. measured_at, the time of the last
+# publish, is recorded for inspection only; nothing orders by it.
+#
+# Cache shape: {five_hour, seven_day, measured_at, seen: {plan, windows},
+# sessions: {"<session_id>": {sig, at}}}. A cache written before 0.3.3 has
+# no sessions map, so every session records itself at its next render and
+# publishes at the response after that; that is the whole migration. A
+# cache with no windows at all (lost, garbage) is filled by the first
+# render's own reading, whichever tab that is, until a response lands.
 #
 # A metered session takes no part in the cache, neither reading nor writing.
 # Sharing is only sound between sessions on the same account: an API-key or
@@ -507,20 +532,34 @@ resolve_rate_windows() {
   # carrying a percentage known to be wrong.
   IFS=$'\x1f' read -r five_show five_pct five_reset week_show week_pct week_reset rate_new < <(
     jq -nr --argjson now "$(date +%s)" --argjson p "$rate_raw" --argjson c "$rate_cache" \
-       --arg plan "$auth_plan" --argjson responded "$responded" '
+       --arg plan "$auth_plan" --argjson responded "$responded" \
+       --arg sid "$session_id" --arg cost "$cost" '
       # Keep only a window that carries a usable numeric resets_at.
       def clean($o):
         if ($o | type) == "object" and ($o.resets_at | type) == "number"
         then {used_percentage: (($o.used_percentage | numbers) // 0), resets_at: $o.resets_at}
         else null end;
-      def fresher($a; $b):
-        if $a == null then $b
-        elif $b == null then $a
-        elif [$a.resets_at, $a.used_percentage] >= [$b.resets_at, $b.used_percentage] then $a
-        else $b end;
-      def pick($w): fresher(clean($p[$w]); clean($c[$w]));
-      def live($w): pick($w) | if . != null and .resets_at > $now then . else null end;
-      live("five_hour") as $f | live("seven_day") as $s |
+      clean($p.five_hour) as $pf | clean($p.seven_day) as $ps |
+      # This session is fresh when its payload carries limits and its cost
+      # grew since the signature on file. A session with no signature on
+      # file, a non-numeric one, or a cost that fell (reset by /clear)
+      # records the new signature and waits for its next response.
+      (if $pf == null and $ps == null then "" else $cost end) as $sig |
+      (($c.sessions | objects) // {}) as $sessions |
+      (($sessions[$sid]? | objects | .sig | strings) // null) as $stored |
+      (try ($sig | tonumber) catch null) as $sn |
+      (if $stored == null then null else (try ($stored | tonumber) catch null) end) as $tn |
+      ($sid != "" and $sig != "") as $carries |
+      ($carries and $sn != null and $tn != null and $sn > $tn) as $fresh |
+      ($carries and ($fresh | not) and $sig != $stored) as $record |
+      # A fresh session renders and publishes its own reading, falling back
+      # to the cache for a window its payload lacks or has expired; an idle
+      # one renders the cache, falling back to its own reading likewise.
+      def live($v): if $v != null and $v.resets_at > $now then $v else null end;
+      def pick($w; $pw):
+        if $fresh then (live($pw) // live(clean($c[$w])))
+        else (live(clean($c[$w])) // live($pw)) end;
+      pick("five_hour"; $pf) as $f | pick("seven_day"; $ps) as $s |
       # Windows seen on this plan: what the cache remembers, if it was
       # recorded under the same plan, plus whatever is live right now.
       (($c.seen | objects) // {}) as $seen |
@@ -528,6 +567,14 @@ resolve_rate_windows() {
         + (if $f == null then [] else ["five_hour"] end)
         + (if $s == null then [] else ["seven_day"] end)
         | unique) as $windows |
+      # The sessions map only changes on a publish or a (re)sighting, never
+      # on an idle render: prune week-old (or future-stamped) entries and
+      # record this session only then.
+      (if $fresh or $record then
+         ($sessions | with_entries(select((.value.at? | numbers) != null
+             and .value.at > ($now - 604800) and .value.at <= $now)))
+         + {($sid): {sig: $sig, at: $now}}
+       else $sessions end) as $sessions_new |
       # Show/omit per window. Order matters: a live reading is shown no
       # matter what the auth probe said, so a false "metered" verdict can
       # only ever cost the pre-first-response 0%, never a real number.
@@ -543,7 +590,11 @@ resolve_rate_windows() {
         else true end;
       ( (if $f == null then {} else {five_hour: $f} end)
         + (if $s == null then {} else {seven_day: $s} end)
+        + (if $fresh then {measured_at: $now}
+           elif ($c.measured_at | type) == "number" then {measured_at: $c.measured_at}
+           else {} end)
         + (if ($windows | length) == 0 then {} else {seen: {plan: $plan, windows: $windows}} end)
+        + (if ($sessions_new | length) == 0 then {} else {sessions: $sessions_new} end)
       ) as $merged |
       [ show("five_hour"; $f), ($f.used_percentage // ""), ($f.resets_at // ""),
         show("seven_day"; $s), ($s.used_percentage // ""), ($s.resets_at // ""),
@@ -551,8 +602,11 @@ resolve_rate_windows() {
     ' 2>/dev/null
   )
 
-  # Publish only on a real change, so the common case (five idle sessions
-  # re-rendering once a second) does no disk writes at all.
+  # Write only on a real change, so the common case (five idle sessions
+  # re-rendering once a second) does no disk writes at all. Besides a
+  # publish or a sighting, that is an expired window being dropped, a
+  # `seen` plan changing, or a window the cache lacks being filled from
+  # this session's own reading.
   if [ -n "$rate_new" ] && [ "$rate_new" != "$rate_cache" ] && [ "$auth_plan" != none ]; then
     nut_write_atomic "$rate_new" "$NUT_RATE_CACHE"
   fi
