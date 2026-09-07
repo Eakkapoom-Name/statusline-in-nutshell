@@ -156,16 +156,18 @@ too, by watching the cache be rewritten again without you:
 
 ```bash
 before=$(jq -r .updated_at ~/.claude/nutshell/state/cost_cache.json)
-# wait for a status line render, then:
+# wait for the next turn to finish, then:
 jq -r --argjson b "$before" 'if .updated_at > $b then "spawned refresh ok" else "still \($b): the status line cannot reach ccusage" end' \
   ~/.claude/nutshell/state/cost_cache.json
 ```
 
-The status line only respawns once the cache is older than its 300s window,
-so this can take a few minutes of normal use to answer. If you are not going
-to wait for it, say so rather than reporting a clean bill of health: tell the
-user the foreground run passed and that a `ccusage` outside Claude Code's
-`PATH` would still leave the row empty.
+Wait for the next turn to finish. The plugin's `Stop` hook refreshes the
+cache within 10s of a turn ending, under Claude Code's own environment,
+which is exactly the spawned path this is meant to prove, so the answer
+comes one turn later rather than after minutes of idling. If you are not
+going to wait for it, say so rather than reporting a clean bill of health:
+tell the user the foreground run passed and that a `ccusage` outside Claude
+Code's `PATH` would still leave the row empty.
 
 ### 6. Report
 

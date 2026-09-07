@@ -89,8 +89,16 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # The record separator, named rather than typed. A literal tab in the source
 # is invisible, and an editor set to expand tabs turns it into spaces and
-# breaks every reader of these records with no error anywhere.
+# breaks every reader of these records with no error anywhere. Safe for the
+# dep records because add_dep substitutes `-` for every empty field, so two
+# separators never end up adjacent.
 tab=$'\t'
+
+# The separator for reads whose fields CAN be empty. Tab is IFS whitespace,
+# so `read` collapses a run of them and shifts every later field left; \x1f
+# is not, so an empty field stays an empty field. Same reason statusline.sh
+# reads its payload with \x1f rather than a tab.
+us=$'\x1f'
 
 # ---------------------------------------------------------------------------
 # environment
@@ -110,8 +118,8 @@ case "$(uname -s 2>/dev/null)" in
     if [ -r /etc/os-release ]; then
       # One subshell for all three values: sourcing it once per variable
       # read the same file three times to answer three questions.
-      IFS="$tab" read -r os_name os_version os_like <<EOF
-$(. /etc/os-release 2>/dev/null; printf '%s\t%s\t%s' "${ID:-Linux}" "${VERSION_ID:-}" "${ID_LIKE:-}")
+      IFS="$us" read -r os_name os_version os_like <<EOF
+$(. /etc/os-release 2>/dev/null; printf '%s\037%s\037%s' "${ID:-Linux}" "${VERSION_ID:-}" "${ID_LIKE:-}")
 EOF
       case " $os_name $os_like " in
         *" debian "*|*" ubuntu "*) os_family="debian" ;;
@@ -180,13 +188,24 @@ remedy_ccusage() {
 # sits, because upgrading it through a different one leaves two copies and
 # the wrong one first on PATH. Only reached when ccusage is already
 # installed, so the guess always has a path to work from.
+#
+# The symlink target is examined along with the path, and the node checks
+# come first, because the two are not distinguishable by prefix alone:
+# `npm install -g` under a Homebrew-installed node puts its shim in
+# Homebrew's own bin directory, so matching the prefix first would call an
+# npm install a brew one and hand back `brew upgrade` for a formula that was
+# never installed. The link points into lib/node_modules, which is decisive.
 remedy_ccusage_upgrade() {
-  local p
+  local p t
   p=$(command -v ccusage 2>/dev/null)
-  case "$p" in
-    *"/.bun/"*)                      echo "bun add -g ccusage@latest"; return ;;
-    */Cellar/*|/opt/homebrew/*|/home/linuxbrew/*|/usr/local/Cellar/*)
-                                     echo "brew upgrade ccusage"; return ;;
+  t=$(readlink "$p" 2>/dev/null) || t=""
+  case "$p$t" in
+    *node_modules*|*"/.npm-global/"*|*"/.npm/"*)
+        echo "npm install -g ccusage@latest   # may need sudo with a system node"; return ;;
+    *pnpm*)      echo "pnpm add -g ccusage@latest"; return ;;
+    *"/.bun/"*)  echo "bun add -g ccusage@latest"; return ;;
+    */Cellar/*|/opt/homebrew/*|/home/linuxbrew/*|/usr/local/*)
+                 echo "brew upgrade ccusage"; return ;;
   esac
   if have brew; then echo "brew upgrade ccusage"
   elif have npm;  then echo "npm install -g ccusage@latest   # may need sudo with a system node"
