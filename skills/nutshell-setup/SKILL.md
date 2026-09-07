@@ -67,6 +67,12 @@ the cost windows will actually fill. It runs a real one-day `ccusage daily
 only reliable answer: the field name is not a documented function of the
 version. It costs several seconds, so it is opt-in.
 
+A `probe ccusage_schema fail` is not a separate thing to handle: the
+`dep ccusage` record is reported `old` in that case, with an upgrade command
+in its fix column, so step 2 below already acts on it. An installed binary
+answering with a schema the refresher cannot read leaves the cost windows
+just as empty as no binary at all.
+
 Drop `--porcelain` for a human-readable table when the user asked to see
 the state of their machine rather than have it fixed.
 
@@ -129,9 +135,8 @@ touches `config.json` or anything under `state/`, and never writes a
 
 ### 5. Prove the cost line end to end, if ccusage was just installed
 
-`command -v ccusage` only proves the binary is on *your* `PATH`. The status
-line spawns its refresher separately, so run the real thing once, in the
-foreground, and check what it wrote:
+`command -v ccusage` only proves the binary is on *your* `PATH`. Run the
+real refresher once, in the foreground, and check what it wrote:
 
 ```bash
 bash ~/.claude/nutshell/bin/cost_cache_refresh.sh
@@ -141,6 +146,26 @@ jq -e 'has("today_cost") and has("weekly_cost") and has("monthly_cost") and has(
 
 The first run has no ledger to scan from, so it reads every transcript and
 takes several seconds. That is expected, and only the first run.
+
+This run inherits your `PATH`, which is the one thing it cannot prove. The
+status line spawns its own refresher, and a `ccusage` under a prefix that
+Claude Code's `PATH` lacks (a user-local npm prefix is the usual one) passes
+this check and still leaves the cost line empty, which is the exact symptom
+this whole step exists to rule out. So confirm the *spawned* refresher runs
+too, by watching the cache be rewritten again without you:
+
+```bash
+before=$(jq -r .updated_at ~/.claude/nutshell/state/cost_cache.json)
+# wait for a status line render, then:
+jq -r --argjson b "$before" 'if .updated_at > $b then "spawned refresh ok" else "still \($b): the status line cannot reach ccusage" end' \
+  ~/.claude/nutshell/state/cost_cache.json
+```
+
+The status line only respawns once the cache is older than its 300s window,
+so this can take a few minutes of normal use to answer. If you are not going
+to wait for it, say so rather than reporting a clean bill of health: tell the
+user the foreground run passed and that a `ccusage` outside Claude Code's
+`PATH` would still leave the row empty.
 
 ### 6. Report
 

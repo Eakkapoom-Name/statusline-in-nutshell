@@ -9,8 +9,10 @@
 # not call this script at all.
 #
 # Written to survive the very thing it diagnoses: it must run and produce a
-# useful report on a machine with no jq, so nothing here parses JSON, and
-# the only tools used are the ones every POSIX system already has. Stock
+# useful report on a machine with no jq, so nothing outside --probe parses
+# JSON, and the only tools used are the ones every POSIX system already
+# has (--probe needs both ccusage and jq, and says so when either is
+# absent rather than failing). Stock
 # bash 3.2 (macOS), BSD userland, no GNU coreutils assumed, same rules as
 # the rest of the plugin.
 #
@@ -42,7 +44,11 @@ for arg in "$@"; do
   case "$arg" in
     --porcelain) porcelain=1 ;;
     --probe)     probe=1 ;;
-    -h|--help)   sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # Print the header comment, from the line after the shebang up to the
+    # first line that is not a comment. A fixed line range drifts silently
+    # the moment the header is edited, which is how --help ends up printing
+    # a stray sentence from whatever follows it.
+    -h|--help)   awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)           printf 'nutshell-doctor: unknown option: %s\n' "$arg" >&2; exit 2 ;;
   esac
 done
@@ -81,6 +87,11 @@ ver_ge() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# The record separator, named rather than typed. A literal tab in the source
+# is invisible, and an editor set to expand tabs turns it into spaces and
+# breaks every reader of these records with no error anywhere.
+tab=$'\t'
+
 # ---------------------------------------------------------------------------
 # environment
 # ---------------------------------------------------------------------------
@@ -97,9 +108,11 @@ case "$(uname -s 2>/dev/null)" in
     # a derivative (Mint, Pop!_OS, Zorin) resolve to its apt/dnf parent
     # instead of falling through to "unknown".
     if [ -r /etc/os-release ]; then
-      os_name=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-Linux}")
-      os_version=$(. /etc/os-release 2>/dev/null; printf '%s' "${VERSION_ID:-}")
-      os_like=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID_LIKE:-}")
+      # One subshell for all three values: sourcing it once per variable
+      # read the same file three times to answer three questions.
+      IFS="$tab" read -r os_name os_version os_like <<EOF
+$(. /etc/os-release 2>/dev/null; printf '%s\t%s\t%s' "${ID:-Linux}" "${VERSION_ID:-}" "${ID_LIKE:-}")
+EOF
       case " $os_name $os_like " in
         *" debian "*|*" ubuntu "*) os_family="debian" ;;
         *" fedora "*|*" rhel "*)   os_family="fedora" ;;
@@ -163,6 +176,25 @@ remedy_ccusage() {
   echo "no channel found: install Homebrew, Node (npm) or Bun first"
 }
 
+# The channel a present ccusage came through, guessed from where its binary
+# sits, because upgrading it through a different one leaves two copies and
+# the wrong one first on PATH. Only reached when ccusage is already
+# installed, so the guess always has a path to work from.
+remedy_ccusage_upgrade() {
+  local p
+  p=$(command -v ccusage 2>/dev/null)
+  case "$p" in
+    *"/.bun/"*)                      echo "bun add -g ccusage@latest"; return ;;
+    */Cellar/*|/opt/homebrew/*|/home/linuxbrew/*|/usr/local/Cellar/*)
+                                     echo "brew upgrade ccusage"; return ;;
+  esac
+  if have brew; then echo "brew upgrade ccusage"
+  elif have npm;  then echo "npm install -g ccusage@latest   # may need sudo with a system node"
+  elif have bun;  then echo "bun add -g ccusage@latest"
+  else echo "upgrade ccusage through whichever channel installed $p"
+  fi
+}
+
 remedy_flock() {
   case "$os_kind" in
     macos) have brew && echo "brew install flock" || echo "install Homebrew (https://brew.sh), then: brew install flock" ;;
@@ -184,100 +216,6 @@ remedy_timeout() {
 }
 
 # ---------------------------------------------------------------------------
-# checks
-#
-# Records are emitted as: dep <name> <tier> <verdict> <version> <path> <remedy>
-# verdict is ok | old | missing. `-` stands in for an empty field so the
-# record always has the same number of columns.
-# ---------------------------------------------------------------------------
-
-required_bad=0
-records=""
-
-add_dep() { # name tier verdict version path remedy loss
-  records="$records$1	$2	$3	${4:--}	${5:--}	${6:--}	${7:--}
-"
-  [ "$2" = "required" ] && [ "$3" != "ok" ] && required_bad=1
-  return 0
-}
-
-# jq. The one hard requirement: every script reads and writes its JSON
-# through it. 1.6 is the floor, not because 1.5 is known to fail (every
-# builtin and flag these scripts use predates it) but because 1.6 is the
-# oldest version still shipped by a supported distro, so anything below it
-# is a machine worth flagging rather than a machine worth supporting.
-JQ_MIN="1.6"
-if v=$(ver_of jq); then
-  if ver_ge "${v:-0}" "$JQ_MIN"; then
-    add_dep jq required ok "$v" "$(command -v jq)" - -
-  else
-    add_dep jq required old "$v" "$(command -v jq)" "$(remedy_jq)" "the plugin is only tested from >= $JQ_MIN"
-  fi
-else
-  add_dep jq required missing - - "$(remedy_jq)" "the status line cannot run at all"
-fi
-
-# bash. Reported, never remedied: the plugin is written for stock bash 3.2
-# precisely so that macOS needs no newer one, and telling a macOS user to
-# install bash would be telling them to fix a problem they do not have.
-if v=$(ver_of bash); then
-  if ver_ge "${v:-0}" "3.2"; then
-    add_dep bash required ok "$v" "$(command -v bash)" - -
-  else
-    add_dep bash required old "$v" "$(command -v bash)" "install bash 3.2 or newer" "the plugin is only tested from >= 3.2"
-  fi
-else
-  add_dep bash required missing - - "install bash" "the status line cannot run at all"
-fi
-
-# ccusage. No version floor is asserted here, and that is deliberate. The
-# scripts read `.daily[].period`, a field older releases called something
-# else; 19.0.3 is the oldest release the field is confirmed in, but the
-# release notes never documented the rename, so any number written here
-# would be a guess. A fresh install gets the latest and the question does
-# not arise; an existing install is settled by --probe, which asks the
-# binary instead of asking a changelog, and keeps working if the field is
-# ever renamed again.
-if v=$(ver_of ccusage); then
-  add_dep ccusage optional ok "$v" "$(command -v ccusage)" - -
-else
-  add_dep ccusage optional missing - - "$(remedy_ccusage)" \
-    "today / week / month / all-time stay empty; reset-all-time unavailable"
-fi
-
-# claude on PATH. Only used by the background probe that decides whether
-# this account has rate limits at all.
-if v=$(ver_of claude); then
-  add_dep claude optional ok "$v" "$(command -v claude)" - -
-else
-  add_dep claude optional missing - - "already installed if you are reading this; check your PATH" \
-    "line 3 can show a 0% row it should have left out"
-fi
-
-# flock. Guarded everywhere it is used, so its absence costs no
-# correctness: the writes are atomic (temp file, validate, rename) and the
-# ledger merge is idempotent, so concurrent refreshes lose nothing worse
-# than repeated work. What it buys is that repeated work not happening.
-if v=$(ver_of flock); then
-  add_dep flock optional ok "$v" "$(command -v flock)" - -
-elif have flock; then
-  add_dep flock optional ok - "$(command -v flock)" - -
-else
-  add_dep flock optional missing - - "$(remedy_flock)" \
-    "concurrent refreshes are not serialised (wasted work, no data loss)"
-fi
-
-# timeout. Same shape: guarded, so its absence is a missing safety net
-# rather than a failure. Without it a hung `claude auth status` is never
-# cut short, and reset-all-time can hang instead of failing at 90s.
-if v=$(ver_of timeout); then
-  add_dep timeout optional ok "$v" "$(command -v timeout)" - -
-else
-  add_dep timeout optional missing - - "$(remedy_timeout)" \
-    "hung auth probe and reset-all-time are not cut short"
-fi
-
-# ---------------------------------------------------------------------------
 # ccusage schema probe (--probe)
 #
 # The authoritative check, and the only one that proves the cost windows
@@ -285,6 +223,11 @@ fi
 # look for the field the refresher reads. A version comparison cannot do
 # this, because the field name is not a documented function of the version.
 # Costs seconds (it reads transcripts), which is why it is opt-in.
+#
+# It runs before the checks below, not after, because a failed probe is
+# what downgrades the ccusage record: a binary that answers with the wrong
+# schema is exactly as useless as one that is too old, and saying so in
+# the record is what gives the setup skill something to act on.
 # ---------------------------------------------------------------------------
 
 probe_result="skipped"
@@ -303,6 +246,120 @@ if [ "$probe" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# checks
+#
+# Records are emitted as:
+#   dep <name> <tier> <verdict> <version> <path> <remedy> <cost if absent>
+# verdict is ok | old | missing. `-` stands in for an empty field so the
+# record always has the same number of columns.
+# ---------------------------------------------------------------------------
+
+required_bad=0
+records=""
+
+add_dep() { # name tier verdict version path remedy loss
+  records="$records$1$tab$2$tab$3$tab${4:--}$tab${5:--}$tab${6:--}$tab${7:--}
+"
+  [ "$2" = "required" ] && [ "$3" != "ok" ] && required_bad=1
+  return 0
+}
+
+# jq. The one hard requirement: every script reads and writes its JSON
+# through it. 1.6 is the floor, not because 1.5 is known to fail (every
+# builtin and flag these scripts use predates it) but because 1.6 is the
+# oldest version still shipped by a supported distro, so anything below it
+# is a machine worth flagging rather than a machine worth supporting.
+JQ_MIN="1.6"
+if have jq; then
+  # An empty version means `--version` printed something the pattern does
+  # not match, which says nothing about how old the tool is. Reporting that
+  # as `old` would fail the run and block the install over a parsing miss,
+  # so an unknown version is reported as ok with no version, the same way
+  # the optional tools below treat one.
+  v=$(ver_of jq)
+  if [ -z "$v" ]; then
+    add_dep jq required ok - "$(command -v jq)" - -
+  elif ver_ge "$v" "$JQ_MIN"; then
+    add_dep jq required ok "$v" "$(command -v jq)" - -
+  else
+    add_dep jq required old "$v" "$(command -v jq)" "$(remedy_jq)" "the plugin is only tested from >= $JQ_MIN"
+  fi
+else
+  add_dep jq required missing - - "$(remedy_jq)" "the status line cannot run at all"
+fi
+
+# bash. Reported, never remedied: the plugin is written for stock bash 3.2
+# precisely so that macOS needs no newer one, and telling a macOS user to
+# install bash would be telling them to fix a problem they do not have.
+if have bash; then
+  v=$(ver_of bash)
+  if [ -z "$v" ]; then
+    add_dep bash required ok - "$(command -v bash)" - -
+  elif ver_ge "$v" "3.2"; then
+    add_dep bash required ok "$v" "$(command -v bash)" - -
+  else
+    add_dep bash required old "$v" "$(command -v bash)" "install bash 3.2 or newer" "the plugin is only tested from >= 3.2"
+  fi
+else
+  add_dep bash required missing - - "install bash" "the status line cannot run at all"
+fi
+
+# ccusage. No version floor is asserted here, and that is deliberate. The
+# scripts read `.daily[].period`, a field older releases called something
+# else; 19.0.3 is the oldest release the field is confirmed in, but the
+# release notes never documented the rename, so any number written here
+# would be a guess. A fresh install gets the latest and the question does
+# not arise; an existing install is settled by --probe, which asks the
+# binary instead of asking a changelog, and keeps working if the field is
+# ever renamed again.
+if have ccusage; then
+  v=$(ver_of ccusage)
+  if [ "$probe_result" = "fail" ]; then
+    # Installed, and answering with a schema the refresher cannot read. The
+    # windows stay empty exactly as if it were absent, so it is reported as
+    # `old` with an upgrade command rather than `ok`: a verdict the setup
+    # skill already knows how to act on.
+    add_dep ccusage optional old "$v" "$(command -v ccusage)" "$(remedy_ccusage_upgrade)" \
+      "answers without the .daily[].period field; the cost windows stay empty"
+  else
+    add_dep ccusage optional ok "$v" "$(command -v ccusage)" - -
+  fi
+else
+  add_dep ccusage optional missing - - "$(remedy_ccusage)" \
+    "today / week / month / all-time stay empty; reset-all-time unavailable"
+fi
+
+# claude on PATH. Only used by the background probe that decides whether
+# this account has rate limits at all.
+if have claude; then
+  add_dep claude optional ok "$(ver_of claude)" "$(command -v claude)" - -
+else
+  add_dep claude optional missing - - "already installed if you are reading this; check your PATH" \
+    "line 3 can show a 0% row it should have left out"
+fi
+
+# flock. Guarded everywhere it is used, so its absence costs no
+# correctness: the writes are atomic (temp file, validate, rename) and the
+# ledger merge is idempotent, so concurrent refreshes lose nothing worse
+# than repeated work. What it buys is that repeated work not happening.
+if have flock; then
+  add_dep flock optional ok "$(ver_of flock)" "$(command -v flock)" - -
+else
+  add_dep flock optional missing - - "$(remedy_flock)" \
+    "concurrent refreshes are not serialised (wasted work, no data loss)"
+fi
+
+# timeout. Same shape: guarded, so its absence is a missing safety net
+# rather than a failure. Without it a hung `claude auth status` is never
+# cut short, and reset-all-time can hang instead of failing at 90s.
+if have timeout; then
+  add_dep timeout optional ok "$(ver_of timeout)" "$(command -v timeout)" - -
+else
+  add_dep timeout optional missing - - "$(remedy_timeout)" \
+    "hung auth probe and reset-all-time are not cut short"
+fi
+
+# ---------------------------------------------------------------------------
 # output
 # ---------------------------------------------------------------------------
 
@@ -317,7 +374,7 @@ if [ "$porcelain" -eq 1 ]; then
   printf 'pkgmgr\t%s\n' "$pkgmgrs"
   printf 'install\t%s\t%s\n' "$install_state" "$NUT_BIN_DIR"
   printf 'probe\tccusage_schema\t%s\n' "$probe_result"
-  printf '%s' "$records" | while IFS='	' read -r n t v ver p r l; do
+  printf '%s' "$records" | while IFS="$tab" read -r n t v ver p r l; do
     [ -n "$n" ] || continue
     printf 'dep\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$t" "$v" "$ver" "$p" "$r" "$l"
   done
@@ -328,17 +385,17 @@ printf '%s %s (%s), %s\n' "$os_name" "${os_version:-?}" "$os_kind" "${os_arch:-?
 printf 'package managers: %s\n' "$pkgmgrs"
 printf 'installed scripts: %s (%s)\n' "$install_state" "$NUT_BIN_DIR"
 [ "$probe_result" = "skipped" ] || printf 'ccusage schema probe: %s\n' "$probe_result"
-printf '\n%-9s %-9s %-8s %-9s %s\n' DEP TIER STATUS VERSION "FIX / COST IF MISSING"
-printf '%s' "$records" | while IFS='	' read -r n t v ver p r l; do
+printf '\n%-9s %-9s %-8s %-9s %s\n' DEP TIER STATUS VERSION "FIX"
+printf '%s' "$records" | while IFS="$tab" read -r n t v ver p r l; do
   [ -n "$n" ] || continue
   if [ "$v" = "ok" ]; then
     printf '%-9s %-9s %-8s %-9s %s\n' "$n" "$t" "$v" "$ver" "-"
   else
     printf '%-9s %-9s %-8s %-9s %s\n' "$n" "$t" "$v" "$ver" "$r"
-    # "old" is a version floor, "missing" is a lost feature. Same column,
-    # different sentence, so the label has to follow the verdict.
-    if [ "$v" = "old" ]; then lbl="needs"; else lbl="cost"; fi
-    printf '%-9s %-9s %-8s %-9s   %s: %s\n' "" "" "" "" "$lbl" "$l"
+    # One label for all three verdicts. The sentence differs (a version
+    # floor, a lost feature, a binary answering with the wrong schema) but
+    # every one of them is the reason to run the command on the line above.
+    printf '%-9s %-9s %-8s %-9s   why: %s\n' "" "" "" "" "$l"
   fi
 done
 exit "$required_bad"
