@@ -189,21 +189,31 @@ remedy_ccusage() {
 # the wrong one first on PATH. Only reached when ccusage is already
 # installed, so the guess always has a path to work from.
 #
-# The symlink target is examined along with the path, and the node checks
-# come first, because the two are not distinguishable by prefix alone:
-# `npm install -g` under a Homebrew-installed node puts its shim in
-# Homebrew's own bin directory, so matching the prefix first would call an
-# npm install a brew one and hand back `brew upgrade` for a formula that was
-# never installed. The link points into lib/node_modules, which is decisive.
+# The symlink target is examined along with the path, and the node channels
+# are checked before the prefixes, because the two are not distinguishable
+# by prefix alone: `npm install -g` under a Homebrew-installed node puts its
+# shim in Homebrew's own bin directory, so matching the prefix first would
+# call an npm install a brew one and hand back `brew upgrade` for a formula
+# that was never installed. The link points into node_modules, which settles
+# it.
+#
+# Within the node channels the order is specific before generic, and that
+# ordering is load-bearing rather than tidy. Every node-based channel routes
+# through node_modules -- a bun global links to
+# ../install/global/node_modules/ccusage/src/cli.js, a pnpm global to
+# .../pnpm/global/<n>/node_modules/... -- so a node_modules arm placed first
+# swallows both and answers `npm` for all three. bun and pnpm carry markers
+# that npm never does; npm's only reliable marker is the one they all share,
+# so it has to go last.
 remedy_ccusage_upgrade() {
   local p t
   p=$(command -v ccusage 2>/dev/null)
   t=$(readlink "$p" 2>/dev/null) || t=""
   case "$p$t" in
+    *"/.bun/"*|*"/bun/"*) echo "bun add -g ccusage@latest"; return ;;
+    *pnpm*)      echo "pnpm add -g ccusage@latest"; return ;;
     *node_modules*|*"/.npm-global/"*|*"/.npm/"*)
         echo "npm install -g ccusage@latest   # may need sudo with a system node"; return ;;
-    *pnpm*)      echo "pnpm add -g ccusage@latest"; return ;;
-    *"/.bun/"*)  echo "bun add -g ccusage@latest"; return ;;
     */Cellar/*|/opt/homebrew/*|/home/linuxbrew/*|/usr/local/*)
                  echo "brew upgrade ccusage"; return ;;
   esac
