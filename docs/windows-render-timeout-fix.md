@@ -1,14 +1,14 @@
-# Windows: status line never rendered
+# Windows: statusline never rendered
 
 ## Problem
 
-On Windows, the status line never appeared. `~/.claude/settings.json` and
+On Windows, the statusline never appeared. `~/.claude/settings.json` and
 `~/.claude/nutshell/config.json` were both correct, and running
 `statusline.sh` by hand produced correct output — so the script itself
 looked fine in isolation.
 
 The actual cause only showed up under real load. Claude Code cancels an
-in-flight status line render whenever a new update triggers (a new
+in-flight statusline render whenever a new update triggers (a new
 assistant message, `/compact`, a permission-mode change, or the
 `refreshInterval` timer), and triggers land every 2-3 seconds during active
 use. `statusline.sh` took 4-7 seconds per render. Instrumenting the script
@@ -30,7 +30,7 @@ through CRLF translation. `jq -r` was emitting a trailing `\r\n`; bash's
 field of every one of the script's `jq` reads. This silently broke real
 behavior on Windows: a `disabled: true` config value read as `"true\r"`
 and never matched, so `statusline-toggle.sh off` did not actually turn the
-status line off, and the cost/auth background refreshers spawned on every
+statusline off, and the cost/auth background refreshers spawned on every
 render instead of only when their caches were stale.
 
 ## Fix
@@ -69,11 +69,11 @@ across ~47 payload/config combinations, run twice — once normally and once
 with the bash 4.2+ fast paths force-disabled to simulate the bash 3.2
 fallback code paths macOS uses — with all cases passing both times.
 
+The bash 3.2 path was then confirmed on real hardware: macOS 26.5.2
+arm64, stock bash 3.2.57, jq 1.8.2.
+
 ### Caveats
 
-- The bash-3.2 fallback path was exercised by disabling the version gate
-  on bash 5.3, not by running on an actual bash 3.2 install. It has not
-  been verified on real macOS hardware.
 - Fork cost is inherently platform-dependent; the 67→11 reduction and the
   `-j` fix are correctness/performance improvements everywhere, but the
   original may never have been slow enough to hit the cancellation window
