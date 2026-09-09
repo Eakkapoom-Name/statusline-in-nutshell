@@ -59,9 +59,9 @@ done
 
 # First dotted number in a --version line. Every tool this plugin touches
 # prints its version differently ("jq-1.8.2", "ccusage 20.0.20",
-# "2.1.224 (Claude Code)", "timeout (GNU coreutils) 9.11", "GNU bash,
-# version 3.2.57(1)-release"), and in all of them the first dotted number is
-# the version. Cheaper and steadier than a pattern per tool.
+# "2.1.224 (Claude Code)", "GNU bash, version 3.2.57(1)-release"), and in
+# all of them the first dotted number is the version. Cheaper and steadier
+# than a pattern per tool.
 ver_of() {
   command -v "$1" >/dev/null 2>&1 || return 1
   "$1" --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)*' | head -1
@@ -224,26 +224,6 @@ remedy_ccusage_upgrade() {
   fi
 }
 
-remedy_flock() {
-  case "$os_kind" in
-    macos) have brew && echo "brew install flock" || echo "install Homebrew (https://brew.sh), then: brew install flock" ;;
-    *)     echo "part of util-linux; install util-linux with your package manager" ;;
-  esac
-}
-
-# On macOS the fix is coreutils, and the reason it works is worth stating:
-# Homebrew g-prefixes only the commands macOS also ships. macOS ships no
-# `timeout`, so coreutils installs it unprefixed and `command -v timeout`
-# finds it. No gnubin PATH entry is needed, and none should be added: that
-# directory also shadows the system `date`, `stat` and `sort`, whose BSD
-# behaviour this plugin's fallbacks are written against.
-remedy_timeout() {
-  case "$os_kind" in
-    macos) have brew && echo "brew install coreutils" || echo "install Homebrew (https://brew.sh), then: brew install coreutils" ;;
-    *)     echo "part of coreutils; install coreutils with your package manager" ;;
-  esac
-}
-
 # ---------------------------------------------------------------------------
 # ccusage schema probe (--probe)
 #
@@ -314,7 +294,7 @@ if have jq; then
     add_dep jq required old "$v" "$(command -v jq)" "$(remedy_jq)" "the plugin is only tested from >= $JQ_MIN"
   fi
 else
-  add_dep jq required missing - - "$(remedy_jq)" "the status line cannot run at all"
+  add_dep jq required missing - - "$(remedy_jq)" "the statusline cannot run at all"
 fi
 
 # bash. Reported, never remedied: the plugin is written for stock bash 3.2
@@ -330,7 +310,7 @@ if have bash; then
     add_dep bash required old "$v" "$(command -v bash)" "install bash 3.2 or newer" "the plugin is only tested from >= 3.2"
   fi
 else
-  add_dep bash required missing - - "install bash" "the status line cannot run at all"
+  add_dep bash required missing - - "install bash" "the statusline cannot run at all"
 fi
 
 # ccusage. No version floor is asserted here, and that is deliberate. The
@@ -348,45 +328,31 @@ if have ccusage; then
     # windows stay empty exactly as if it were absent, so it is reported as
     # `old` with an upgrade command rather than `ok`: a verdict the setup
     # skill already knows how to act on.
-    add_dep ccusage optional old "$v" "$(command -v ccusage)" "$(remedy_ccusage_upgrade)" \
+    add_dep ccusage required old "$v" "$(command -v ccusage)" "$(remedy_ccusage_upgrade)" \
       "answers without the .daily[].period field; the cost windows stay empty"
   else
-    add_dep ccusage optional ok "$v" "$(command -v ccusage)" - -
+    add_dep ccusage required ok "$v" "$(command -v ccusage)" - -
   fi
 else
-  add_dep ccusage optional missing - - "$(remedy_ccusage)" \
+  add_dep ccusage required missing - - "$(remedy_ccusage)" \
     "today / week / month / all-time stay empty; reset-all-time unavailable"
 fi
 
 # claude on PATH. Only used by the background probe that decides whether
 # this account has rate limits at all.
 if have claude; then
-  add_dep claude optional ok "$(ver_of claude)" "$(command -v claude)" - -
+  add_dep claude required ok "$(ver_of claude)" "$(command -v claude)" - -
 else
-  add_dep claude optional missing - - "already installed if you are reading this; check your PATH" \
+  add_dep claude required missing - - "already installed if you are reading this; check your PATH" \
     "line 3 can show a 0% row it should have left out"
 fi
 
-# flock. Guarded everywhere it is used, so its absence costs no
-# correctness: the writes are atomic (temp file, validate, rename) and the
-# ledger merge is idempotent, so concurrent refreshes lose nothing worse
-# than repeated work. What it buys is that repeated work not happening.
-if have flock; then
-  add_dep flock optional ok "$(ver_of flock)" "$(command -v flock)" - -
-else
-  add_dep flock optional missing - - "$(remedy_flock)" \
-    "concurrent refreshes are not serialised (wasted work, no data loss)"
-fi
-
-# timeout. Same shape: guarded, so its absence is a missing safety net
-# rather than a failure. Without it a hung `claude auth status` is never
-# cut short, and reset-all-time can hang instead of failing at 90s.
-if have timeout; then
-  add_dep timeout optional ok "$(ver_of timeout)" "$(command -v timeout)" - -
-else
-  add_dep timeout optional missing - - "$(remedy_timeout)" \
-    "hung auth probe and reset-all-time are not cut short"
-fi
+# flock and timeout used to be reported here as optional tools whose
+# absence cost serialisation and a hang guard. Since 0.3.4 the library
+# carries both (nut_lock_acquire, nut_timeout), so neither is a dependency
+# on any platform and neither is worth a row that can only ever say "ok".
+# nut_timeout still prefers GNU timeout when it is installed, which is a
+# choice of implementation, not a requirement.
 
 # ---------------------------------------------------------------------------
 # output

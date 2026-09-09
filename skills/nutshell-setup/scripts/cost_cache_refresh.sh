@@ -51,17 +51,16 @@ days_ago_date() {
 
 # A normal (background) run skips when another refresh holds the lock; a
 # reset run WAITS for it instead, so a user-triggered reset can never be
-# silently skipped. flock is util-linux only (absent on stock macOS): when
-# missing, proceed unlocked rather than fail. The redirection is guarded as
-# well as the command: if the lock file cannot be opened (read-only home,
-# full disk) the unguarded form left fd 9 closed and then ran flock against
-# it, which failed on every run.
+# silently skipped. The wait is capped: the caller already limits a reset
+# to 90s, so blocking for longer than that could only turn a skipped reset
+# into a killed one. Giving up on the wait proceeds unlocked rather than
+# failing, which is what the flock-less path used to do on stock macOS,
+# except that now it is the rare case instead of the whole platform.
 take_lock() {
-  command -v flock >/dev/null 2>&1 && exec 9>"$NUT_COST_LOCK" 2>/dev/null || return 0
   if [ "$reset_all_time" -eq 1 ]; then
-    flock 9
+    nut_lock_wait "$NUT_COST_LOCK" "$NUT_LOCK_STALE_COST" 60 || return 0
   else
-    flock -n 9 || exit 0
+    nut_lock_acquire "$NUT_COST_LOCK" "$NUT_LOCK_STALE_COST" || exit 0
   fi
 }
 

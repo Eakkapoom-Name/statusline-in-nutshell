@@ -1,14 +1,14 @@
 ---
 name: nutshell-setup
-description: Install or repair the nutshell status line by checking its dependencies, copying the bundled scripts into ~/.claude/nutshell/bin/ and registering the statusLine command in settings.json. Use when the status line scripts are missing, the status line is broken, blank or stale, when parts of the cost line stay empty, or when the user asks to install, reinstall, repair, fix or update the nutshell status line. The other nutshell status line skills call this one when the scripts are missing.
+description: Install or repair the nutshell statusline by checking its dependencies, copying the bundled scripts into ~/.claude/nutshell/bin/ and registering the statusLine command in settings.json. Use when the statusline scripts are missing, the statusline is broken, blank or stale, when parts of the cost line stay empty, or when the user asks to install, reinstall, repair, fix or update the nutshell statusline. The other nutshell statusline skills call this one when the scripts are missing.
 ---
 
-# Install the nutshell status line
+# Install the nutshell statusline
 
 The `SessionStart` hook installs the scripts at every session start, so this
-skill is the mid-session repair: it is what the other nutshell status line
+skill is the mid-session repair: it is what the other nutshell statusline
 skills invoke when they find `~/.claude/nutshell/bin/statusline-toggle.sh`
-missing, and what you run yourself when the status line looks wrong without
+missing, and what you run yourself when the statusline looks wrong without
 waiting for a restart.
 
 It is also the only place that installs dependencies. The hook never does:
@@ -55,11 +55,20 @@ os       <kind> <name> <version> <arch>
 pkgmgr   <package managers found, space separated>
 install  <ok|incomplete|unknown> <bin dir>
 probe    ccusage_schema <ok|fail|skipped|unavailable>
-dep      <name> <required|optional> <ok|old|missing> <version> <path> <fix> <cost if absent>
+dep      <name> <required> <ok|old|missing> <version> <path> <fix> <cost if absent>
 ```
 
-Exit status is 1 when a required dependency is missing or too old, 0
-otherwise. Optional gaps never fail the run.
+Every dependency is required as of 0.3.4, so exit status 1 means at least
+one of them is missing or too old, and 0 means all four are present. The
+tier column is kept in the record shape because the porcelain format is
+parsed, not because anything reports `optional` any more. `flock` and
+`timeout` are no longer reported at all: the library carries its own lock
+and its own timeout, so neither tool has to be installed on any platform.
+
+Missing does not mean the same thing for all four. `jq` and `bash` are
+stop conditions, nothing works without them. `ccusage` and `claude` leave
+the install worth finishing, with rows that stay permanently empty or
+wrong until they are there.
 
 Add `--probe` when `ccusage` is already installed and you want to confirm
 the cost windows will actually fill. It runs a real one-day `ccusage daily
@@ -78,27 +87,28 @@ the state of their machine rather than have it fixed.
 
 ### 2. Offer to close the gaps, never close them unasked
 
-Every `missing` or `old` record carries the exact command for this OS in its
-`<fix>` column. Ask before running any of them, with `AskUserQuestion`, and
-show the commands you would run. Two rules that do not bend:
+Every `missing` or `old` record carries a `<fix>` column. For `jq`, `bash`
+and `ccusage` it is the exact command for this OS. For `claude` it is prose,
+since the binary is Claude Code itself and a gap there is a `PATH` problem
+with no install command to offer. Ask before running any command, with
+`AskUserQuestion`, and show what you would run. Two rules that do not bend:
 
 - **Never run `sudo` without showing the exact command first.** This covers
   `apt-get`/`dnf`/`pacman` and also `npm install -g`, which needs `sudo` on
   a system-installed Node.
 - **Never install Homebrew for the user.** Where the fix column says to
-  install it, report that and stop; it is a much larger change to their
-  machine than anything else here.
+  install it, report that and leave it to them; it is a much larger change
+  to their machine than anything else here. Reporting it is not a reason to
+  abandon the install: finish the sync and say which rows stay empty, unless
+  the gap is `jq` or `bash`.
 
 If the user declines, that is a complete answer. Continue with the install
 and report what stays off, using the `<cost if absent>` column:
 
-- no `jq`: the status line cannot run at all.
+- no `jq`: the statusline cannot run at all.
 - no `ccusage`: today / week / month / all-time stay empty, and
   `nutshell-reset-all-time-cost` is unavailable.
 - no `claude` on `PATH`: line 3 can show a 0% row it should have left out.
-- no `flock`: concurrent refreshes are not serialised. Wasted work, no data
-  loss: the writes are atomic and the ledger merge is idempotent.
-- no `timeout`: a hung auth probe and a hung reset are never cut short.
 
 ### 3. Run the same script the hook runs
 
@@ -116,11 +126,11 @@ place), copies each of the five files into `bin/` when it is missing or
 differs from the bundled copy, and registers
 `"statusLine": {"type": "command", "command": "bash ~/.claude/nutshell/bin/statusline.sh", "refreshInterval": 1}`
 in `~/.claude/settings.json`. It skips the registration when
-`config.json` says `"disabled": true` (the user made the status line
-inactive on purpose), when `settings.json` registers a status line that
-is not ours, or when `settings.json` is not a JSON object. It never
-touches `config.json` or anything under `state/`, and never writes a
-`.bak`.
+`config.json` says `"disabled": true` (the user made the statusline
+inactive on purpose), when `settings.json` registers a statusline that
+is not ours, or when `settings.json` cannot be parsed or repaired. It
+never touches `config.json` or anything under `state/`, and never writes a
+`.bak`: the settings repair writes only when every key survives it.
 
 ### 4. Check the result yourself, since the script reports nothing
 
@@ -131,7 +141,8 @@ touches `config.json` or anything under `state/`, and never writes a
   `"disabled": true` (leave it; the nutshell-active skill is the way
   back), the command points at a different script (someone else's status
   line; do not replace it), or `settings.json` is not a JSON object
-  (the script leaves it alone until it is valid again).
+  (the script repairs a BOM, comments, a trailing comma or a non-object
+      by itself, and leaves anything else alone until it is valid again).
 
 ### 5. Prove the cost line end to end, if ccusage was just installed
 
@@ -148,7 +159,7 @@ The first run has no ledger to scan from, so it reads every transcript and
 takes several seconds. That is expected, and only the first run.
 
 This run inherits your `PATH`, which is the one thing it cannot prove. The
-status line spawns its own refresher, and a `ccusage` under a prefix that
+statusline spawns its own refresher, and a `ccusage` under a prefix that
 Claude Code's `PATH` lacks (a user-local npm prefix is the usual one) passes
 this check and still leaves the cost line empty, which is the exact symptom
 this whole step exists to rule out. So confirm the *spawned* refresher runs
@@ -157,7 +168,7 @@ too, by watching the cache be rewritten again without you:
 ```bash
 before=$(jq -r .updated_at ~/.claude/nutshell/state/cost_cache.json)
 # wait for the next turn to finish, then:
-jq -r --argjson b "$before" 'if .updated_at > $b then "spawned refresh ok" else "still \($b): the status line cannot reach ccusage" end' \
+jq -r --argjson b "$before" 'if .updated_at > $b then "spawned refresh ok" else "still \($b): the statusline cannot reach ccusage" end' \
   ~/.claude/nutshell/state/cost_cache.json
 ```
 
@@ -169,11 +180,60 @@ going to wait for it, say so rather than reporting a clean bill of health:
 tell the user the foreground run passed and that a `ccusage` outside Claude
 Code's `PATH` would still leave the row empty.
 
-### 6. Report
+## How to answer
 
-One line on the dependencies (what was already there, what was installed,
-what the user declined and what that costs), and one line on the install
-(what was installed or migrated and whether the registration is in place,
-or "already up to date" when nothing needed doing).
+Short and plain. One template per situation. Quote script output in a code
+block only where a template says so, and add nothing else. Never echo the
+doctor's `--porcelain` records to the user: they are input for you, not a
+report. Say what is missing and what it costs, in words.
+
+Two lines at the end, always in this order:
+
+1. The dependencies: what was already there, what was installed, what the
+   user declined and what that costs.
+2. The install: what was copied or migrated and whether the registration is
+   in place, or "already up to date" when nothing needed doing.
+
+Per outcome:
+
+- Doctor exits 0, sync copies nothing, registration already ours: "Every
+  dependency is present and the statusline is already up to date. Nothing
+  changed."
+- Doctor exits 0, sync copied or migrated files: name what landed in
+  `~/.claude/nutshell/bin/` and say "The row updates within a second."
+- `dep jq` is `missing` or `old` and the user agreed to the fix: report the
+  command that ran and its result. If it failed, quote the failure in a
+  code block and stop: nothing else here can work without `jq`.
+- `dep jq` is `missing` and the user declined: "Without `jq` the statusline
+  cannot run at all. Install it with `<fix>` when you want it back." Stop
+  rather than running the sync, which would exit 0 having done nothing.
+- `dep ccusage` or `dep claude` is `missing` and the user declined: finish
+  the install, then one line per gap taken from its `<cost if absent>`
+  column. No warning tone, a decline is a complete answer, and the rest of
+  the statusline works.
+- `dep ccusage` is `old`, or `probe ccusage_schema fail`: "`ccusage` is
+  installed but too old for the refresher to read, so today, week, month and
+  all-time stay empty. Upgrade it with `<fix>`."
+- Registration skipped because `config.json` says `"disabled": true`: "The
+  scripts are up to date. The statusline is inactive on purpose, so it was
+  not registered. Run `/nutshell:nutshell-active` to bring it back."
+- Registration skipped because `settings.json` registers a different
+  statusline: "The scripts are up to date. `settings.json` registers another
+  statusline, so it was left alone. Run `/nutshell:nutshell-active --force`
+  to replace it." Never force it yourself.
+- Registration skipped because `settings.json` could not be parsed or
+  repaired: "The scripts are up to date. `~/.claude/settings.json` could not
+  be parsed or repaired, so it was left untouched. Fix the file, then run
+  this again." The silent repair covers a BOM, `//` and `/* */` comments, a
+  trailing comma, and a file that is valid JSON but not an object; anything
+  else needs the user.
+- Step 5 ran and the spawned refresh was not waited for: say the foreground
+  run passed and that a `ccusage` outside Claude Code's own `PATH` would
+  still leave the cost row empty. Do not report a clean bill of health you
+  did not verify.
+- The doctor itself cannot run (missing, or non-zero with no records): say
+  which path you tried, then run the sync anyway and report its result. The
+  doctor is a report, not a gate: only a missing `jq` or `bash` stops the
+  install, and a non-zero exit on its own never does.
 
 Never hand-edit `settings.json` or `config.json`.

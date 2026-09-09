@@ -38,24 +38,16 @@ nut_ensure_dirs
 # One lock for the whole job, so the read-modify-write of the sessions map
 # does not lose another session's entry. Non-blocking: a second session
 # skips this round rather than queueing, its next render is a second later
-# and the probe takes about 200ms, so it simply gets the lock then. Where
-# flock is missing (stock macOS) two probes can interleave and one entry is
-# lost, which costs that session a re-probe at its next cycle, nothing
-# worse. The redirection is guarded too: a failed `exec 9>` would otherwise
-# terminate the shell.
-if command -v flock >/dev/null 2>&1 && exec 9>"$NUT_AUTH_LOCK" 2>/dev/null; then
-  flock -n 9 || exit 0
-fi
+# and the probe takes about 200ms, so it simply gets the lock then. This is
+# the library's lock rather than flock, so the interleaving that used to
+# lose an entry on stock macOS cannot happen there any more.
+nut_lock_acquire "$NUT_AUTH_LOCK" "$NUT_LOCK_STALE_AUTH" || exit 0
 
 now=$(date +%s)
 
-# `timeout` guards a hung probe where it exists (GNU coreutils), and is
-# skipped where it does not.
-if command -v timeout >/dev/null 2>&1; then
-  out=$(timeout 15 claude auth status 2>/dev/null) || out=""
-else
-  out=$(claude auth status 2>/dev/null) || out=""
-fi
+# A hung probe is cut short at 15s on every platform: nut_timeout uses GNU
+# timeout where it exists and its own watcher where it does not.
+out=$(nut_timeout 15 claude auth status 2>/dev/null) || out=""
 
 # The credentials mtime is read here, after the probe, so the stored
 # signature always matches the state the verdict was taken from.

@@ -21,12 +21,10 @@ mkdir -p "$NUT_BIN_DIR" "$NUT_STATE_DIR" "$NUT_LOCK_DIR" 2>/dev/null
 # Non-blocking lock: two SessionStart hooks can start at once (several
 # panes or sessions). Without it, interleaved runs could race on the
 # settings.json read-modify-write and lose one of the writes. Another
-# instance holding the lock is doing the same work, so just leave. Guarded
-# behind `command -v` since stock macOS ships no flock.
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"$NUT_SYNC_LOCK" 2>/dev/null || exit 0
-  flock -n 9 || exit 0
-fi
+# instance holding the lock is doing the same work, so just leave. The
+# lock is the library's own, not flock, so this holds on macOS and Windows
+# too, where flock is absent.
+nut_lock_acquire "$NUT_SYNC_LOCK" "$NUT_LOCK_STALE_SYNC" || exit 0
 
 nut_migrate_legacy_layout
 
@@ -60,7 +58,7 @@ if [ "$all_installed" -eq 1 ]; then
   done
 fi
 
-# Register the statusLine command, unless the user turned the status line
+# Register the statusLine command, unless the user turned the statusline
 # off with `statusline-toggle.sh off` (the nutshell-inactive skill), which
 # records "disabled": true and deletes the key: without this check the hook
 # would re-register at the next session start and the opt-out would last
@@ -68,14 +66,16 @@ fi
 command -v jq >/dev/null 2>&1 || exit 0
 nut_config_is_disabled && exit 0
 
-# A settings.json that exists but is not a JSON object is left exactly as
-# the user left it, and registration is retried at the next session start.
+# A settings.json that is not a JSON object gets one silent repair attempt
+# (BOM, comments, trailing comma, or a non-object replaced by {}), which
+# writes only when every key survives. Anything else is left exactly as the
+# user left it, and registration is retried at the next session start.
 if [ -f "$NUT_SETTINGS" ]; then
-  nut_settings_is_object || exit 0
+  nut_settings_is_object || nut_settings_recover || exit 0
 else
   echo '{}' > "$NUT_SETTINGS" 2>/dev/null
 fi
-# Never take over a status line someone else registered (Claude Code's own
+# Never take over a statusline someone else registered (Claude Code's own
 # /statusline writes one from your shell PS1). Ours, at either the current
 # path or the pre-0.3.1 one, is re-registered whenever it differs from the
 # wanted value, which is also what repoints an old install at the new path

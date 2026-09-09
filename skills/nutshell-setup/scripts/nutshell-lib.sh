@@ -161,6 +161,178 @@ nut_spawn() {
 }
 
 # ---------------------------------------------------------------------------
+# Locks and timeouts
+#
+# flock is util-linux: absent on stock macOS, and not reliably present in
+# the bash Git for Windows ships. timeout is GNU coreutils, absent on
+# macOS for the same reason. Both used to be optional, with the scripts
+# running unserialised and unbounded where they were missing. These two
+# helpers remove that split so all three platforms behave alike.
+#
+# The lock is a file created with O_EXCL through bash's own noclobber
+# redirection, which is atomic on ext4, btrfs, APFS, HFS+ and on NTFS
+# through the Cygwin layer. It costs no fork, which matters because the
+# refreshers are spawned from a render path that was cut from 67 forks to
+# 11 for exactly this reason.
+#
+# Why not use flock where it exists and this only as the fallback: the two
+# mechanisms do not exclude each other. Claude Code's spawned PATH is not
+# always the terminal's (the same difference that hides a user-local
+# ccusage from the refresher), so a background refresher could take the
+# file lock while a terminal's reset-all-time took the kernel lock on the
+# same path, and both would run. One mechanism everywhere is what makes
+# the guarantee real.
+#
+# What is given up against flock: the kernel releases a flock when the
+# holder dies, however it dies, and a file outlives its owner. The stale
+# break below is the answer, and it is why every lock carries a maximum
+# age. Two waiters can still both judge a lock dead and both take it; that
+# window is small and its cost is the duplicated work the lock exists to
+# avoid, never lost data, since every write in this plugin is a rename of
+# a temp file and every merge is idempotent.
+#
+# The held file is "<lock>.held" rather than the lock path itself, because
+# pre-0.3.4 installs left an empty sync.lock, cost_cache.lock and
+# auth_cache.lock on disk as flock's fd targets. Reusing those paths would
+# read every upgraded install as permanently locked until the stale break
+# fired.
+# ---------------------------------------------------------------------------
+
+# Seconds after which a held lock is treated as abandoned. Per call site,
+# because the jobs differ by two orders of magnitude: the sync hook and the
+# auth probe are seconds, a full ccusage rescan is 5 to 14 and a
+# reset-all-time is capped at 90.
+NUT_LOCK_STALE_SYNC=60
+NUT_LOCK_STALE_AUTH=60
+NUT_LOCK_STALE_COST=120
+
+# Try to take lock $1, whose holder is stale after $2 seconds. Returns 0
+# with the lock held and an EXIT trap set to release it, 1 when someone
+# else holds it. Never blocks.
+#
+# noclobber is saved and restored around the attempt: leaving it on would
+# break every later plain redirection in the caller, including the temp
+# file writes in nut_write_atomic. The trap is built with the path already
+# expanded, so it releases this lock and not whatever $1 holds later.
+nut_lock_acquire() {
+  local lock="$1.held" stale="${2:-$NUT_LOCK_STALE_COST}" had_noclobber=0 rc age now
+  case "$-" in *C*) had_noclobber=1 ;; esac
+  set -o noclobber
+  { printf '%s\n' "$$" > "$lock"; } 2>/dev/null
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # Held, or left behind by a process that died. Age decides which.
+    now=$(date +%s 2>/dev/null) || now=""
+    age=$(nut_mtime "$lock" 2>/dev/null) || age=""
+    if [ -n "$now" ] && [ -n "$age" ] && [ "$((now - age))" -ge "$stale" ]; then
+      rm -f "$lock" 2>/dev/null
+      { printf '%s\n' "$$" > "$lock"; } 2>/dev/null
+      rc=$?
+    fi
+  fi
+  [ "$had_noclobber" -eq 1 ] || set +o noclobber
+  [ "$rc" -eq 0 ] || return 1
+  # EXIT releases on a normal end. The three signal traps release AND exit,
+  # which the combined form "trap ... EXIT INT TERM HUP" does not do: a
+  # handled signal there runs the handler and RESUMES the script. That is
+  # not academic. nut_timeout signals the process group of a reset that ran
+  # long, and a refresher that caught TERM, dropped its lock and carried on
+  # would finish its pipeline on half-killed input, write nothing (the
+  # content is rejected), exit 0, and let statusline-toggle.sh report
+  # "done: all-time cost is now 0" for a reset that never happened.
+  trap "rm -f '$lock' 2>/dev/null" EXIT
+  trap "rm -f '$lock' 2>/dev/null; exit 143" TERM
+  trap "rm -f '$lock' 2>/dev/null; exit 130" INT
+  trap "rm -f '$lock' 2>/dev/null; exit 129" HUP
+  return 0
+}
+
+# Wait for lock $1 (stale after $2 seconds) for at most $3 seconds, then
+# give up and return 1. Used by reset-all-time, which must not be silently
+# skipped the way a background refresh is. The retry interval is a whole
+# second: POSIX sleep promises no fractions and bash 3.2 is the floor.
+nut_lock_wait() {
+  local lock="$1" stale="${2:-$NUT_LOCK_STALE_COST}" max="${3:-120}" waited=0
+  while ! nut_lock_acquire "$lock" "$stale"; do
+    [ "$waited" -lt "$max" ] || return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
+# Release lock $1 and clear the trap nut_lock_acquire set.
+nut_lock_release() {
+  rm -f "$1.held" 2>/dev/null
+  trap - EXIT INT TERM HUP
+  return 0
+}
+
+# Run "$@" with a limit of $1 seconds. Uses GNU timeout when it is there,
+# since it needs no extra processes; falls back to a watcher subshell.
+#
+# The watcher's own output is sent to /dev/null, and that redirection is
+# load bearing rather than tidy: this function is called inside $(...),
+# and a command substitution returns only once every writer to the capture
+# pipe has closed it. A watcher that inherited the pipe would hold it for
+# the whole limit, so a 170ms auth probe under a 15s limit would take 15s.
+#
+# rc is collected with `|| rc=$?` because statusline-toggle.sh runs under
+# `set -e`, where a bare `wait` on a non-zero child exits the script before
+# the next line runs. A command killed by the watcher returns 143 rather
+# than GNU timeout's 124; both callers test zero against non-zero only, so
+# the distinction is not worth a marker file to recover.
+# True only for GNU coreutils timeout. The name alone is not enough: the
+# bash Git for Windows ships has C:\Windows\System32\timeout.exe on its
+# PATH, which is cmd's "wait N seconds and swallow a keypress" and rejects
+# a command argument outright. Probed once per shell and remembered, so the
+# check costs one fork per script rather than one per call.
+nut_have_gnu_timeout() {
+  if [ -z "${NUT_GNU_TIMEOUT:-}" ]; then
+    if timeout --version 2>/dev/null | head -1 | grep -qi coreutils; then
+      NUT_GNU_TIMEOUT=yes
+    else
+      NUT_GNU_TIMEOUT=no
+    fi
+  fi
+  [ "$NUT_GNU_TIMEOUT" = yes ]
+}
+
+nut_timeout() {
+  local secs="$1" pid watcher rc=0 had_monitor=0
+  shift
+  if nut_have_gnu_timeout; then
+    timeout "$secs" "$@"
+    return $?
+  fi
+  # Job control is switched on just long enough to start the child, which
+  # is what puts it in a process group of its own with the pgid equal to
+  # its pid. Signalling the group rather than the one process is what GNU
+  # timeout does, and it is not optional here: `claude auth status` and
+  # `bash refresher --reset-all-time` both fork children of their own, and
+  # a grandchild that survives keeps the capture pipe of a surrounding
+  # $(...) open, so the substitution would block for the full run of the
+  # command the limit was supposed to cut short. Monitor mode is restored
+  # immediately, so the reaping below prints no job-control notices.
+  case "$-" in *m*) had_monitor=1 ;; esac
+  set -m
+  "$@" &
+  pid=$!
+  [ "$had_monitor" -eq 1 ] || set +m
+  # The group form is tried first and the single process is the fallback,
+  # for the case where the platform gave the child no group of its own.
+  ( sleep "$secs"
+    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    sleep 2
+    kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+  watcher=$!
+  wait "$pid" || rc=$?
+  kill -TERM "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  return "$rc"
+}
+
+# ---------------------------------------------------------------------------
 # config.json (written only by statusline-toggle.sh)
 # ---------------------------------------------------------------------------
 
@@ -173,7 +345,7 @@ nut_config_raw() {
   jq -r ".$1" "$NUT_CONFIG" 2>/dev/null
 }
 
-# True when the user handed the status line row back to Claude Code with
+# True when the user handed the statusline row back to Claude Code with
 # `statusline-toggle.sh off` (the nutshell-inactive skill).
 nut_config_is_disabled() {
   [ "$(nut_config_raw disabled)" = "true" ]
@@ -194,7 +366,7 @@ nut_registered_value() {
 }
 
 # True when settings.json's statusLine is absent, or is one we installed.
-# Anyone can register a status line (Claude Code's own /statusline writes
+# Anyone can register a statusline (Claude Code's own /statusline writes
 # one from your shell PS1), and someone else's registration must never be
 # deleted or overwritten. Ours is recognised by the command pointing at our
 # script, at the current path or at the pre-0.3.1 one: an old install has
@@ -222,20 +394,114 @@ nut_settings_is_object() {
 # Add our statusLine key to settings.json, creating the file when absent.
 # Returns 0 when written, 1 when the file exists but is not a JSON object
 # (left untouched), 2 when the write itself failed.
+# Strip the three things that make a hand-edited settings.json unparseable
+# without changing any value: a UTF-8 BOM, // and /* */ comments, and a
+# comma before a closing } or ]. Quote-aware, so a "https://..." value or a
+# comma inside a string survives; awk rather than sed because that state has
+# to be tracked character by character, and awk is POSIX everywhere this
+# runs. Prints the cleaned text on stdout and nothing on stderr.
+nut_json_sanitize() {
+  awk 'BEGIN { RS = "\001"; }
+    {
+      s = $0
+      sub(/^\357\273\277/, "", s)          # UTF-8 BOM
+      out = ""; n = length(s)
+      in_str = 0; esc = 0; line_c = 0; block_c = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1); d = (i < n) ? substr(s, i + 1, 1) : ""
+        if (line_c)  { if (c == "\n") { line_c = 0; out = out c } ; continue }
+        if (block_c) { if (c == "*" && d == "/") { block_c = 0; i++ } ; continue }
+        if (in_str) {
+          out = out c
+          if (esc)            { esc = 0 }
+          else if (c == "\\") { esc = 1 }
+          else if (c == "\"") { in_str = 0 }
+          continue
+        }
+        if (c == "\"") { in_str = 1; out = out c; continue }
+        if (c == "/" && d == "/") { line_c = 1; i++; continue }
+        if (c == "/" && d == "*") { block_c = 1; i++; continue }
+        out = out c
+      }
+      # Second pass, same quote tracking: drop a comma whose next
+      # non-whitespace character closes an object or an array.
+      res = ""; n = length(out); in_str = 0; esc = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(out, i, 1)
+        if (in_str) {
+          res = res c
+          if (esc)            { esc = 0 }
+          else if (c == "\\") { esc = 1 }
+          else if (c == "\"") { in_str = 0 }
+          continue
+        }
+        if (c == "\"") { in_str = 1; res = res c; continue }
+        if (c == ",") {
+          j = i + 1
+          while (j <= n && substr(out, j, 1) ~ /[ \t\r\n]/) j++
+          k = substr(out, j, 1)
+          if (k == "}" || k == "]") continue
+        }
+        res = res c
+      }
+      printf "%s", res
+    }' "$1" 2>/dev/null
+}
+
+# Silent repair of a settings.json this plugin cannot edit. Two cases:
+# valid JSON that is not an object (`[1,2]`, `"x"`, `null`) holds no
+# settings to keep, so it becomes `{}`; unparseable text is run through
+# nut_json_sanitize and written back ONLY when the result parses as an
+# object, so a file whose damage is anything but a BOM, a comment or a
+# trailing comma is left exactly as the user left it. No backup is written
+# by design: the repair either preserves every key or does not happen.
+# Returns 0 when the file is usable afterwards, 1 when it is not.
+nut_settings_recover() {
+  local cleaned
+  [ -f "$NUT_SETTINGS" ] || return 1
+  nut_settings_is_object && return 0
+  if jq -e . "$NUT_SETTINGS" >/dev/null 2>&1; then
+    nut_write_atomic '{}
+' "$NUT_SETTINGS" || return 1
+    return 0
+  fi
+  cleaned=$(nut_json_sanitize "$NUT_SETTINGS")
+  [ -n "$cleaned" ] || return 1
+  printf '%s' "$cleaned" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
+  nut_write_atomic "$cleaned" "$NUT_SETTINGS" || return 1
+  return 0
+}
+
+# A write that failed on permissions, where the file is ours to fix. Adds
+# the owner write bit and nothing else: never chown, never touch a file
+# owned by someone else, never widen group or other. Returns 0 when it
+# changed something worth retrying.
+nut_settings_make_writable() {
+  [ -f "$NUT_SETTINGS" ] || return 1
+  [ -w "$NUT_SETTINGS" ] && return 1
+  [ -O "$NUT_SETTINGS" ] || return 1
+  chmod u+w "$NUT_SETTINGS" 2>/dev/null || return 1
+  [ -w "$NUT_SETTINGS" ]
+}
+
 nut_settings_register() {
   [ -f "$NUT_SETTINGS" ] || printf '{}\n' > "$NUT_SETTINGS" 2>/dev/null
-  nut_settings_is_object || return 1
+  nut_settings_is_object || nut_settings_recover || return 1
+  nut_jq_edit "$NUT_SETTINGS" --argjson v "$NUT_STATUSLINE_VALUE" '.statusLine = $v' 2>/dev/null && return 0
+  nut_settings_make_writable || return 2
   nut_jq_edit "$NUT_SETTINGS" --argjson v "$NUT_STATUSLINE_VALUE" '.statusLine = $v' 2>/dev/null || return 2
 }
 
 # Remove the statusLine key. Same return codes; a missing file is 0, there
 # is nothing to remove. Removing the key is what makes Claude Code show its
 # own footer again: it suppresses its built-in keyboard hints only while a
-# custom status line is configured, so hiding every part is not the same
+# custom statusline is configured, so hiding every part is not the same
 # thing (that leaves the key set and the row simply empty).
 nut_settings_unregister() {
   [ -f "$NUT_SETTINGS" ] || return 0
-  nut_settings_is_object || return 1
+  nut_settings_is_object || nut_settings_recover || return 1
+  nut_jq_edit "$NUT_SETTINGS" 'del(.statusLine)' 2>/dev/null && return 0
+  nut_settings_make_writable || return 2
   nut_jq_edit "$NUT_SETTINGS" 'del(.statusLine)' 2>/dev/null || return 2
 }
 
