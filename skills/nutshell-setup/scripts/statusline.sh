@@ -20,7 +20,7 @@
 # and lands in a cache this script only reads.
 #
 # FORK COUNT IS THE BUDGET, and it is a correctness constraint, not a
-# nicety. Claude Code cancels an in-flight status line whenever a new
+# nicety. Claude Code cancels an in-flight statusline whenever a new
 # update triggers (a new assistant message, /compact, a permission-mode
 # change, the refreshInterval timer), so a render that is slower than the
 # gap between triggers is killed every time and the user sees nothing at
@@ -287,10 +287,12 @@ fmt_reset() {
 git_branch() {
   local dir="$1" gitdir="" head=""
   BRANCH=""
+  GITROOT=""
   [ -n "$dir" ] || return
   while [ -n "$dir" ]; do
     if [ -d "$dir/.git" ]; then
       gitdir="$dir/.git"
+      GITROOT="$dir"
       break
     fi
     # A linked worktree has .git as a FILE holding "gitdir: <path>", and
@@ -298,7 +300,7 @@ git_branch() {
     if [ -f "$dir/.git" ]; then
       IFS= read -r head < "$dir/.git" 2>/dev/null
       case "$head" in
-        'gitdir: '*) gitdir="${head#gitdir: }" ;;
+        'gitdir: '*) gitdir="${head#gitdir: }"; GITROOT="$dir" ;;
         *)           gitdir="" ;;
       esac
       break
@@ -401,10 +403,24 @@ obj($rateraw) as $rc  |
 # "null", which is neither "false" nor "true", so the bash defaults hold -
 # shown for the parts, off for emoji, active for disabled. The session part
 # falls back to its pre-v0.3.0 key "rate" via has(), for the same reason.
-($cfg.cost | tostring) as $cfg_cost |
+# Hidden on a first install, for the same reason and by the same test as
+# $cfg_mode below: an empty $cfg is a config.json that does not exist yet.
+# A config that exists without the key keeps failing open to shown, so an
+# upgrade never loses a row it already had.
+(if ($cfg | length) == 0 then "false" else ($cfg.cost | tostring) end) as $cfg_cost |
 ((if ($cfg | has("session")) then $cfg.session else $cfg.rate end) | tostring) as $cfg_session |
 ($cfg.workspace | tostring) as $cfg_workspace |
 ($cfg.emoji | tostring) as $cfg_emoji |
+# Two different defaults, and the difference is deliberate. An EMPTY $cfg is
+# a config.json that does not exist yet, which is a first install (sync.sh
+# registers the statusline, statusline-toggle.sh writes the config later),
+# and a first install starts on the one-line layout. A config that exists
+# but carries no mode key was written before 0.3.4, and that is an upgrade:
+# it stays on the four-line layout its owner already had. An unparseable
+# config also lands here as empty, which is the same answer a fresh install
+# gets, and no worse than any other fail-open default in this file.
+(if ($cfg | length) == 0 then "simple"
+ else (($cfg.mode // "detail") | tostring) end) as $cfg_mode |
 ($cfg.disabled | tostring) as $cfg_disabled |
 ($cfg_session != "false") as $showrate |
 
@@ -556,7 +572,8 @@ def show($w; $v):
   (if $showrate then ($s.used_percentage // "") else "" end),
   (if $showrate then ($s.resets_at // "") else "" end),
   (if $showrate then ($merged | tojson) else "" end),
-  (if $showrate then (($merged | tojson) != ($c | tojson)) else false end)
+  (if $showrate then (($merged | tojson) != ($c | tojson)) else false end),
+  $cfg_mode
 ] | map(tostring) | join($sep)
 '
 
@@ -611,7 +628,7 @@ read_all() {
   nut_jq_file_arg rateraw "$NUT_RATE_CACHE"
 
   # Defaults for the case where jq is missing or errors: every part shown,
-  # emoji off, active. The status line degrades to what the payload alone
+  # emoji off, active. The statusline degrades to what the payload alone
   # can say rather than going blank.
   model=""; effort=""; ctx_used=""; ctx_used_tokens=""; ctx_total_tokens=""
   cost=""; session_id=""; ws_dir=""; repo_owner=""; repo_name=""; rate_has=false
@@ -621,7 +638,7 @@ read_all() {
   auth_plan=""; auth_updated_at=0; auth_sig=""
   five_show=""; five_pct=""; five_reset=""
   week_show=""; week_pct=""; week_reset=""
-  rate_new=""; rate_changed=false
+  rate_new=""; rate_changed=false; cfg_mode="detail"
 
   IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens \
       cost session_id ws_dir repo_owner repo_name rate_has \
@@ -630,12 +647,17 @@ read_all() {
       today_cost weekly_cost monthly_cost all_time_cost cost_updated_at \
       auth_plan auth_updated_at auth_sig \
       five_show five_pct five_reset week_show week_pct week_reset \
-      rate_new rate_changed < <(jq "${NUT_JQ_ARGS[@]}" "$NUT_JQ_PROG" 2>/dev/null)
+      rate_new rate_changed cfg_mode < <(jq "${NUT_JQ_ARGS[@]}" "$NUT_JQ_PROG" 2>/dev/null)
 
   # Belt and braces behind the -j above: only the final field could ever
-  # pick up a stray carriage return, and it gates a disk write, so strip
-  # one if some other jq build still manages to emit it.
+  # pick up a stray carriage return, so strip one if some other jq build
+  # still manages to emit it. Both of the last two are stripped, and which
+  # one is last has changed once already: rate_changed gates a disk write,
+  # and cfg_mode is compared against an exact string, so a trailing \r there
+  # would silently force the detail layout on the one platform (Git for
+  # Windows, native jq, CRLF stdout) this guard exists for.
   rate_changed="${rate_changed%$'\r'}"
+  cfg_mode="${cfg_mode%$'\r'}"
 
   # Fail open exactly as the old per-part reads did.
   show_cost=true
@@ -648,6 +670,9 @@ read_all() {
   [ "$cfg_session" = "false" ] && show_rate=false
   [ "$cfg_workspace" = "false" ] && show_workspace=false
   [ "$cfg_emoji" = "true" ] && emoji_mode=true
+  # Anything but the exact word "simple" renders the four lines, so a
+  # hand-edited or truncated value can never produce a row nobody expects.
+  [ "$cfg_mode" = "simple" ] || cfg_mode="detail"
 
   advisor=""
   if [ -n "$advisor_raw" ]; then
@@ -853,6 +878,170 @@ build_line4() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Simple mode (config "mode": "simple")
+#
+# One row instead of four. The fields are the ten worth keeping: model and
+# effort, advisor, context, the current session's cost, both rate windows
+# with a countdown, and where the session is. Everything cut is cut for
+# width, and the arithmetic is worth stating: the same ten fields carrying
+# the detail row's word labels measure 216 terminal cells, which is not a
+# status row, it is a paragraph. Dropping the labels and merging workspace
+# with repo brings it to about 112.
+#
+# Labels go, so ORDER carries the meaning and is fixed: model, advisor,
+# context, cost, 5h, 7d, location. Two exceptions keep their word, because
+# without them the field is unreadable rather than merely unlabelled: the
+# advisor (otherwise two identical model names sit side by side) and the
+# context counts. Emoji mode needs neither, an icon is already a label.
+# ---------------------------------------------------------------------------
+
+# Time from now until $1 (epoch) as a compact duration into CDSTR: "4d1h"
+# over a day, "4h56m" under one, "35m" under an hour. Empty for a missing,
+# unparseable or already-passed timestamp, which is also what the detail
+# row does with one: a window whose reset has passed is dropped from the
+# payload by Claude Code, so this is the same event seen from here.
+fmt_countdown() {
+  local left days hours mins
+  CDSTR=""
+  case "$1" in ''|*[!0-9]*) return ;; esac
+  [ "$NOW" -gt 0 ] || return
+  left=$(( $1 - NOW ))
+  [ "$left" -gt 0 ] || return
+  days=$(( left / 86400 ))
+  hours=$(( (left % 86400) / 3600 ))
+  mins=$(( (left % 3600) / 60 ))
+  if [ "$days" -gt 0 ]; then
+    printf -v CDSTR '%dd%dh' "$days" "$hours"
+  elif [ "$hours" -gt 0 ]; then
+    printf -v CDSTR '%dh%dm' "$hours" "$mins"
+  else
+    printf -v CDSTR '%dm' "$mins"
+  fi
+}
+
+# One rate window for the simple row: "5h 42% (4h56m)", or the icon in
+# place of the "5h". The window is omitted on exactly the same rules as
+# the detail row, so a metered session shows neither here nor there.
+simple_rate() {  # label_key short_name pct reset
+  local pct="$3"
+  SEG=""
+  [ -z "$pct" ] && pct=0
+  fmt_countdown "$4"
+  label "$1"
+  [ "$emoji_mode" = true ] || LBL="$2"
+  if [ -n "$CDSTR" ]; then
+    printf -v SEG '%s %b%.0f%%%b (%s)' "$LBL" "$ORANGE" "$pct" "$RESET" "$CDSTR"
+  else
+    printf -v SEG '%s %b%.0f%%%b' "$LBL" "$ORANGE" "$pct" "$RESET"
+  fi
+}
+
+# Where the session is, in one segment. At a repo root that is the repo
+# name; in a subdirectory it is the repo name plus the path below it, which
+# says more than either half alone; outside a repo it is the abbreviated
+# path, since there is no name to use. The branch joins with "@" in words
+# mode and with its own icon in emoji mode.
+simple_location() {
+  local name="" rel="" display=""
+  SEG=""
+  git_branch "$ws_dir"
+  if [ -n "$GITROOT" ]; then
+    name="$repo_name"
+    [ -n "$name" ] || name="${GITROOT##*/}"
+    if [ "$ws_dir" = "$GITROOT" ]; then
+      display="$name"
+    else
+      rel="${ws_dir#"$GITROOT"/}"
+      display="$name/$rel"
+    fi
+  elif [ -n "$ws_dir" ]; then
+    case "$ws_dir" in
+      "$HOME")   display="~" ;;
+      "$HOME"/*) display="~${ws_dir#"$HOME"}" ;;
+      *)         display="$ws_dir" ;;
+    esac
+  fi
+  [ -n "$display" ] || return
+  label workspace
+  if [ "$emoji_mode" = true ]; then
+    printf -v SEG '%s %b%s%b' "$LBL" "$ORANGE" "$display" "$RESET"
+    if [ -n "$BRANCH" ]; then
+      label branch
+      printf -v SEG '%s %s %b%s%b' "$SEG" "$LBL" "$ORANGE" "$BRANCH" "$RESET"
+    fi
+  else
+    [ -n "$BRANCH" ] && display="$display@$BRANCH"
+    printf -v SEG '%b%s%b' "$ORANGE" "$display" "$RESET"
+  fi
+}
+
+# The whole row. Every part toggle still applies: cost off drops the cost,
+# session off drops both windows, workspace off drops the location. Model
+# is pinned on, so this can never be empty.
+build_simple() {
+  local seg
+  simple=()
+  if [ -n "$model" ]; then
+    if [ "$emoji_mode" = true ]; then
+      label model
+      if [ -n "$effort" ]; then
+        effort_color "$effort"
+        printf -v seg '%s %b%s%b (%b%s%b)' "$LBL" "$ORANGE" "$model" "$RESET" "$ECOLOR" "$effort" "$RESET"
+      else
+        printf -v seg '%s %b%s%b' "$LBL" "$ORANGE" "$model" "$RESET"
+      fi
+    elif [ -n "$effort" ]; then
+      effort_color "$effort"
+      printf -v seg '%b%s%b (%b%s%b)' "$ORANGE" "$model" "$RESET" "$ECOLOR" "$effort" "$RESET"
+    else
+      printf -v seg '%b%s%b' "$ORANGE" "$model" "$RESET"
+    fi
+    simple+=("$seg")
+  fi
+  if [ -n "$advisor" ]; then
+    label advisor
+    [ "$emoji_mode" = true ] || LBL="adv"
+    printf -v seg '%s %b%s%b' "$LBL" "$ORANGE" "$advisor" "$RESET"
+    simple+=("$seg")
+  fi
+  # Counts, not the percentage bar: the bar costs ten cells and the counts
+  # are the number a user acts on.
+  [ -z "$ctx_used_tokens" ] && ctx_used_tokens=0
+  if [ -n "$ctx_total_tokens" ]; then
+    if [ "$tok_tie" = true ]; then
+      fmt_tokens_pair "$ctx_used_tokens" "$ctx_total_tokens"
+    else
+      USED_FMT="$used_fmt_jq"
+      TOTAL_FMT="$total_fmt_jq"
+    fi
+    label context
+    [ "$emoji_mode" = true ] || LBL="ctx"
+    printf -v seg '%s %b%s%b/%b%s%b' "$LBL" "$ORANGE" "$USED_FMT" "$RESET" "$ORANGE" "$TOTAL_FMT" "$RESET"
+    simple+=("$seg")
+  fi
+  if [ "$show_cost" = true ] && [ -n "$cost" ]; then
+    if [ "$emoji_mode" = true ]; then
+      label cost_session; cost_item "$LBL" "$cost"; simple+=("$SEG")
+    else
+      printf -v seg '%b%.2f$%b' "$ORANGE" "$cost" "$RESET"
+      simple+=("$seg")
+    fi
+  fi
+  if [ "$show_rate" = true ]; then
+    if [ "$five_show" != false ]; then
+      simple_rate rate_five 5h "$five_pct" "$five_reset"; simple+=("$SEG")
+    fi
+    if [ "$week_show" != false ]; then
+      simple_rate rate_week 7d "$week_pct" "$week_reset"; simple+=("$SEG")
+    fi
+  fi
+  if [ "$show_workspace" = true ]; then
+    simple_location
+    [ -n "$SEG" ] && simple+=("$SEG")
+  fi
+}
+
 # Line 1 always renders (model cannot be hidden), so no combination of part
 # settings produces no output at all. To hand the whole row back to Claude
 # Code, run `statusline-toggle.sh off` instead.
@@ -887,6 +1076,12 @@ main() {
   spawn_cost_refresh_if_stale
   spawn_auth_probe_if_stale
   write_rate_cache_if_changed
+  if [ "$cfg_mode" = simple ]; then
+    build_simple
+    join_segments "${simple[@]}"
+    printf '%s\n' "$JOINED"
+    exit 0
+  fi
   build_line1
   build_line2
   build_line3

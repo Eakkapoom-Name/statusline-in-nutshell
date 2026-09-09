@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # statusline-toggle.sh: the only writer of config.json, and the command
-# behind every nutshell skill. Shows and hides the status-line parts,
+# behind every nutshell skill. Shows and hides the statusline parts,
 # switches emoji labels, hands the row back to Claude Code and takes it
 # again, resets the all-time cost, and uninstalls.
 #
-# The status line (statusline.sh) has four parts:
+# The statusline (statusline.sh) has four parts:
+# Parts are the same four in both layouts. The line numbers below are the
+# detail layout; in simple they are segments of the one row, and hiding a
+# part removes its segment exactly as it removes its line here.
 #   model    : model name / advisor / context bar          (line 1)
 #              ALWAYS ON. It cannot be hidden and `all` skips it, so line 1
 #              always renders and the row never collapses to nothing.
@@ -15,7 +18,7 @@
 # Independently of those, "emoji" swaps text labels ("model:", "current
 # session:", ...) for icons everywhere. Default OFF (fail-closed), unlike
 # the parts, which fail open (missing key = shown): a missing or bad emoji
-# key must not silently switch the status line to icons the user did not
+# key must not silently switch the statusline to icons the user did not
 # ask for.
 #
 # Changes take effect within ~1s (statusline refreshInterval), no restart.
@@ -37,10 +40,11 @@ TOGGLEABLE_PARTS=(cost session workspace)
 REFRESH="$NUT_BIN_DIR/cost_cache_refresh.sh"
 DEFAULT_CONFIG='{
   "model": true,
-  "cost": true,
+  "cost": false,
   "session": true,
   "workspace": true,
   "emoji": false,
+  "mode": "simple",
   "disabled": false
 }'
 
@@ -52,17 +56,25 @@ Usage:
   statusline-toggle.sh off                      # hand the row back to Claude Code's own footer
   statusline-toggle.sh on [--force]             # take it back, with your saved part settings
   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle; default off
+  statusline-toggle.sh mode [simple|detail]     # no arg = toggle; new installs start simple
   statusline-toggle.sh status
   statusline-toggle.sh reset-all-time --yes     # reset all-time cost to 0 (keeps today/week/month)
   statusline-toggle.sh uninstall --yes [--purge] # remove registration + installed scripts
 
-Parts:
+Parts (both layouts: the line numbers are the detail layout, and in simple
+each part is a segment of the single row):
   model  model name / advisor / context bar               (line 1)
          always on: it cannot be hidden and `all` skips it
   cost   current session / today / week / month / all-time spend (line 2)
   session  usage limits: current 5-hour window + current week (line 3)
   workspace current directory / repo / git branch          (line 4)
   emoji  replace text labels with icons across all shown parts (default off)
+
+Modes:
+  detail  four rows, every part, labelled                 (the original)
+  simple  one row: model/effort, advisor, context counts, session cost,
+          both rate windows with a countdown, repo@branch. No bar, no
+          reset clock times, no today/week/month/all-time
 
 on / off vs show / hide:
   `off` removes the statusLine registration from settings.json, so Claude
@@ -92,14 +104,18 @@ ensure_config() {
     printf '%s\n' "$DEFAULT_CONFIG" > "$NUT_CONFIG"
     return 0
   fi
-  if jq -e 'has("rate") or (.model | tostring) != "true" or (has("emoji") | not) or (has("workspace") | not) or (has("disabled") | not)' \
+  if jq -e 'has("rate") or (.model | tostring) != "true" or (has("emoji") | not) or (has("workspace") | not) or (has("disabled") | not) or ((.mode | tostring) != "simple" and (.mode | tostring) != "detail")' \
        "$NUT_CONFIG" >/dev/null 2>&1; then
     nut_jq_edit "$NUT_CONFIG" '
       (if has("rate") then (if has("session") then del(.rate) else .session = .rate | del(.rate) end) else . end)
       | .model = true
       | (if has("emoji") then . else .emoji = false end)
       | (if has("workspace") then . else .workspace = true end)
-      | (if has("disabled") then . else .disabled = false end)'
+      | (if has("disabled") then . else .disabled = false end)
+      | (if (.mode == "simple" or .mode == "detail") then . else .mode = "detail" end)
+      # An existing config reaching here already had other keys, so it is an
+      # upgrade and keeps the four lines. Only DEFAULT_CONFIG, written when
+      # there is no usable config at all, starts on simple.'
   fi
 }
 
@@ -108,6 +124,13 @@ ensure_config() {
 # default). Mirrors statusline.sh's fail-open reading.
 get_part() {
   [ "$(nut_config_raw "$1")" = "false" ] && echo false || echo true
+}
+
+# The render mode: "simple" or "detail". Anything else, including a missing
+# key, reads as "detail", which is what keeps an install written before
+# 0.3.4 on the four-line row until its owner asks for the other one.
+get_mode() {
+  [ "$(nut_config_raw mode)" = "simple" ] && echo simple || echo detail
 }
 
 # Emoji's current value; missing or bad defaults to false (fail-closed).
@@ -121,12 +144,13 @@ set_key() {
   nut_jq_edit "$NUT_CONFIG" --argjson v "$2" ".${1} = \$v"
 }
 
-# Part, emoji and reset commands refuse while the status line is inactive
-# (handed back to Claude Code with `off`), since nothing they change would
-# be visible. `status`, `on`, `off` and `uninstall` still work.
+# Part and emoji commands refuse while the statusline is inactive (handed
+# back to Claude Code with `off`), since nothing they change would be
+# visible. `status`, `on`, `off`, `reset-all-time` and `uninstall` still
+# work: none of them changes what a hidden row would render.
 require_active() {
   if nut_config_is_disabled; then
-    echo "status line: inactive. Run 'statusline-toggle.sh on' (the nutshell-active skill) first." >&2
+    echo "statusline: inactive. Run 'statusline-toggle.sh on' (the nutshell-active skill) first." >&2
     exit 1
   fi
 }
@@ -151,7 +175,7 @@ set_statusline_key() {
 
 refuse_foreign_statusline() {  # verb-phrase
   echo "statusline-toggle: settings.json's statusLine points at a different" >&2
-  echo "status line, not ours:" >&2
+  echo "statusline, not ours:" >&2
   echo "  $(jq -r '.statusLine.command // "(none)"' "$NUT_SETTINGS" 2>/dev/null)" >&2
 }
 
@@ -159,15 +183,19 @@ refuse_foreign_statusline() {  # verb-phrase
 # output
 # ---------------------------------------------------------------------------
 
-# Full box-drawn table, only for the explicit "status" command.
+# Full box-drawn table, only for the explicit "status" command. model is
+# left out: it is pinned on and cannot be changed, so a row that always
+# reads the same tells the reader nothing. The statusline row says
+# active/inactive rather than on/off, since that is a different axis from
+# the per-part rows below it: it is the registration, not a hidden line.
 print_status() {
-  local p state names=(Part status-line model cost session workspace emoji) states=(Status) name_w=0 state_w=0
+  local p state names=(Part statusline mode cost session workspace emoji) states=(Status) name_w=0 state_w=0
   local top sep bot i name_dashes state_dashes
 
-  if nut_config_is_disabled; then states+=("off"); else states+=("on"); fi
-  for p in "${PARTS[@]}"; do
-    if [ "$p" = model ]; then states+=("on (always)")
-    elif [ "$(get_part "$p")" = "false" ]; then states+=("off")
+  if nut_config_is_disabled; then states+=("inactive"); else states+=("active"); fi
+  states+=("$(get_mode)")
+  for p in "${TOGGLEABLE_PARTS[@]}"; do
+    if [ "$(get_part "$p")" = "false" ]; then states+=("off")
     else states+=("on"); fi
   done
   if [ "$(get_emoji)" = "true" ]; then states+=("on"); else states+=("off"); fi
@@ -212,37 +240,36 @@ cmd_off() {
   # while the key keeps the row reserved). Falling through deletes the
   # stray key instead of reporting a state we are not actually in.
   if nut_config_is_disabled && ! jq -e '.statusLine' "$NUT_SETTINGS" >/dev/null 2>&1; then
-    echo "status line: already off (Claude Code's own footer is showing)"
+    echo "statusline: already off (Claude Code's own footer is showing)"
     exit 0
   fi
   if set_statusline_key off; then
     set_key disabled true
-    echo "status line: off. Claude Code's default footer is back. Your part"
+    echo "statusline: off. Claude Code's default footer is back. Your part"
     echo "settings are kept; run 'statusline-toggle.sh on' to restore this one."
   else
-    echo "statusline-toggle: could not update settings.json, status line left on" >&2
+    echo "statusline-toggle: could not update settings.json, statusline left on" >&2
     exit 1
   fi
 }
 
 cmd_on() {
   if ! nut_statusline_is_ours && [ "${1:-}" != "--force" ]; then
-    echo "statusline-toggle: settings.json already registers a different status" >&2
-    echo "line:" >&2
+    echo "statusline-toggle: settings.json already registers a different statusline:" >&2
     echo "  $(jq -r '.statusLine.command // "(none)"' "$NUT_SETTINGS" 2>/dev/null)" >&2
     echo "Refusing to overwrite it. Re-run as 'on --force' to replace it with" >&2
     echo "this one." >&2
     exit 1
   fi
   if ! nut_config_is_disabled && jq -e '.statusLine' "$NUT_SETTINGS" >/dev/null 2>&1 && nut_statusline_is_ours; then
-    echo "status line: already on"
+    echo "statusline: already on"
     exit 0
   fi
   if set_statusline_key on; then
     set_key disabled false
-    echo "status line: on, restored with your saved part settings."
+    echo "statusline: on, restored with your saved part settings."
   else
-    echo "statusline-toggle: could not update settings.json, status line left off" >&2
+    echo "statusline-toggle: could not update settings.json, statusline left off" >&2
     exit 1
   fi
 }
@@ -307,9 +334,28 @@ cmd_emoji() {
   print_one emoji "$action"
 }
 
-cmd_reset_all_time() {
-  local reset_cmd
+# simple collapses the four rows into one; detail is the original. Bare
+# `mode` toggles, exactly like `emoji`. Gated by require_active like every
+# other setting that only changes what gets drawn.
+cmd_mode() {
+  local action="${1:-toggle}"
   require_active
+  case "$action" in
+    simple) set_key mode '"simple"' ;;
+    detail) set_key mode '"detail"' ;;
+    toggle)
+      if [ "$(get_mode)" = "detail" ]; then set_key mode '"simple"'; action=simple
+      else set_key mode '"detail"'; action=detail; fi
+      ;;
+    *) echo "statusline-toggle: 'mode' needs simple|detail" >&2; usage; exit 1 ;;
+  esac
+  print_one mode "$action"
+}
+
+# Not gated by require_active: the all-time total is cost history, not a
+# rendered part. An inactive statusline stops the tracking, which is exactly
+# when a user may want the counter zeroed before turning it back on.
+cmd_reset_all_time() {
   if [ "${1:-}" != "--yes" ]; then
     echo "statusline-toggle: 'reset-all-time' resets your all-time cost to 0 and cannot be undone." >&2
     echo "(today / week / month are kept.) Re-run to confirm:" >&2
@@ -322,13 +368,10 @@ cmd_reset_all_time() {
     exit 1
   fi
   echo "resetting all-time cost (recomputing from ccusage, ~10s)…"
-  # timeout is GNU coreutils and absent on macOS; run without one there.
-  if command -v timeout >/dev/null 2>&1; then
-    reset_cmd=(timeout 90 bash "$REFRESH" --reset-all-time)
-  else
-    reset_cmd=(bash "$REFRESH" --reset-all-time)
-  fi
-  if ! "${reset_cmd[@]}"; then
+  # 90s is the cap on every platform: nut_timeout falls back to its own
+  # watcher where GNU timeout is missing, so a hung ccusage can no longer
+  # hang this command on macOS or Windows.
+  if ! nut_timeout 90 bash "$REFRESH" --reset-all-time; then
     echo "statusline-toggle: reset failed or timed out" >&2
     exit 1
   fi
@@ -348,7 +391,7 @@ cmd_uninstall() {
     esac
   done
   if [ "$yes" != true ]; then
-    echo "statusline-toggle: 'uninstall' removes the status line registration from settings.json" >&2
+    echo "statusline-toggle: 'uninstall' removes the statusline registration from settings.json" >&2
     echo "and deletes the installed scripts from ~/.claude/nutshell/bin/. Your toggle" >&2
     echo "config, cost history and rate cache are kept unless --purge is also given." >&2
     echo "Re-run to confirm:" >&2
@@ -365,8 +408,12 @@ cmd_uninstall() {
   fi
   # Locks hold no user data, so they go in both paths. Leaving one behind
   # on a non-purge uninstall leaves a file the "kept files" message never
-  # mentions.
-  rm -f "$NUT_SYNC_LOCK" "$NUT_COST_LOCK" "$NUT_AUTH_LOCK"
+  # mentions. Both names are removed: the bare path is the fd target
+  # pre-0.3.4 installs left behind for flock, the .held file is the lock
+  # the library takes now, and an uninstall that removed only one would
+  # leave locks/ non-empty and the rmdir below would keep the directory.
+  rm -f "$NUT_SYNC_LOCK" "$NUT_COST_LOCK" "$NUT_AUTH_LOCK" \
+        "$NUT_SYNC_LOCK.held" "$NUT_COST_LOCK.held" "$NUT_AUTH_LOCK.held"
   # Every installed script but this one, which goes last so the message
   # below always gets printed.
   for f in $NUT_INSTALLED_FILES; do
@@ -398,9 +445,9 @@ cmd_uninstall() {
     rm -f "$NUT_OLD_EXTRA_LEDGER_PREFIX"*.json
   fi
   if [ "$purge" = true ]; then
-    echo "uninstalled: removed the status line registration and the scripts under ~/.claude/nutshell/bin/, and purged config/cost/lock files plus any .bak files left by versions before 0.3.1."
+    echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/, and purged config/cost/lock files plus any .bak files left by versions before 0.3.1."
   else
-    echo "uninstalled: removed the status line registration and the scripts under ~/.claude/nutshell/bin/. Config, cost history, rate cache, auth cache and any .bak files from versions before 0.3.1 were kept."
+    echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/. Config, cost history, rate cache, auth cache and any .bak files from versions before 0.3.1 were kept."
   fi
   rm -f "$NUT_BIN_DIR/statusline-toggle.sh" "$NUT_CLAUDE_DIR/statusline-toggle.sh"
   # Drop the directories once their contents are gone. rmdir, never `rm -r`:
@@ -437,11 +484,12 @@ main() {
     model)                  cmd_model "${2:-}" ;;
     cost|session|workspace) cmd_part "$cmd" "${2:-}" ;;
     emoji)                  cmd_emoji "${2:-}" ;;
+    mode)                   cmd_mode "${2:-}" ;;
     reset-all-time)         cmd_reset_all_time "${2:-}" ;;
     uninstall)              shift; cmd_uninstall "$@" ;;
     "")                     usage; exit 1 ;;
     *)
-      echo "statusline-toggle: unknown part '$cmd' (expected model|cost|session|workspace|all|on|off|emoji|status|reset-all-time|uninstall)" >&2
+      echo "statusline-toggle: unknown part '$cmd' (expected model|cost|session|workspace|all|on|off|emoji|mode|status|reset-all-time|uninstall)" >&2
       usage
       exit 1
       ;;
