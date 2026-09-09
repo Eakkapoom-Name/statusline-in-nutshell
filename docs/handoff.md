@@ -53,6 +53,10 @@ simulated by forcing both fast-path gates false on bash 5.3. The
 `docs/windows-render-timeout-fix.md` note records a real macOS 26.5.2 arm64
 check of the render, but that predates every change in 0.3.4.
 
+The suites that need running live in
+[`docs/test-harness/`](test-harness/README.md); `run-all.sh` drives all of
+them and needs nothing installed.
+
 Run on a Mac (bash 3.2.57, arm64), in this order:
 
 ```bash
@@ -60,6 +64,7 @@ bash --version                      # expect 3.2.57
 bash -n ~/.claude/nutshell/bin/*.sh # every script must parse on 3.2
 bash ~/.claude/nutshell/bin/statusline-toggle.sh status
 bash ~/.claude/nutshell/bin/nutshell-doctor.sh
+bash docs/test-harness/run-all.sh   # about four minutes
 ```
 
 Then the things bash 3.2 could break that 5.x cannot:
