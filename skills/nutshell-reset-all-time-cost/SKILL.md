@@ -1,6 +1,6 @@
 ---
 name: nutshell-reset-all-time-cost
-description: Reset the nutshell statusline's all-time cost counter to zero, leaving today, week and month untouched. Irreversible, needs ccusage, and asks for confirmation first. Use when the user asks to reset, zero or clear their all-time or lifetime cost.
+description: Reset the nutshell statusline's all-time cost counter to zero, leaving today, weekly and monthly untouched. Irreversible, needs ccusage, and asks for confirmation first. Use when the user asks to reset, zero or clear their all-time or lifetime cost.
 ---
 
 # Reset the all-time cost
@@ -61,7 +61,7 @@ Before the script runs:
 
 After the script ran, on a yes:
 
-- stdout ends `done: all-time cost is now 0; today / week / month are unchanged.`:
+- stdout ends `done: all-time cost is now 0; today / weekly / monthly are unchanged.`:
   that line in a code block, then "Done." Leave out the
   `resetting all-time cost` progress line above it.
 - stderr says `ccusage is required for this operation`: the stderr in a code

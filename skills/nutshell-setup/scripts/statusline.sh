@@ -3,8 +3,8 @@
 #
 # Reads the statusLine JSON payload from stdin and prints up to four lines:
 #   1  model / effort / advisor / context bar   (always shown)
-#   2  cost: current session / today / week / month / all-time
-#   3  rate limits: current 5-hour window / current week
+#   2  rate limits: current 5-hour window / current week / per-model week
+#   3  cost: current session / today / weekly / monthly / all-time
 #   4  workspace: directory / repo / branch
 # A line is dropped when it has nothing to say, and lines 2-4 can each be
 # hidden through config.json (statusline-toggle.sh). Every optional field
@@ -38,6 +38,9 @@ nut_ensure_dirs
 
 COST_CACHE_MAX_AGE=300
 AUTH_CACHE_MAX_AGE=300
+# A weekly window moves slowly and the probe is a network call, so this is
+# the longest gate here rather than the shortest.
+USAGE_CACHE_MAX_AGE=300
 
 # This plugin's floor is stock bash 3.2 (macOS's /bin/bash), where `date`
 # and `tr` are the only way to do these things. Bash 4.2+ (Linux, WSL,
@@ -65,7 +68,11 @@ else
 fi
 case "$NOW" in ''|*[!0-9]*) NOW=0 ;; esac
 
-ORANGE='\033[38;2;217;119;87m'
+CLAUDE_ORANGE='\033[38;2;217;119;87m'
+ORANGE="$CLAUDE_ORANGE"
+# The alternate accent, swapped in for ORANGE when config.json says
+# "color": "blue". #8AB4F8, the Antigravity CLI accent.
+BLUE='\033[38;2;138;180;248m'
 GRAY='\033[38;5;240m'
 RESET='\033[0m'
 # Font-only colors matching the /effort picker's per-level colors.
@@ -73,7 +80,12 @@ EFFORT_LOW='\033[38;2;230;180;40m'      # low = warning (yellow)
 EFFORT_MEDIUM='\033[38;2;80;200;120m'   # medium = success (green)
 EFFORT_HIGH='\033[38;2;177;185;249m'    # high = permission (periwinkle)
 EFFORT_XHIGH='\033[38;2;185;150;235m'   # xhigh = lavender
-EFFORT_MAX="$ORANGE"                    # max = Claude brand color (same as context bar)
+# max = the Claude brand color, pinned. It does NOT follow the accent: the
+# effort colors are a fixed scale (yellow, green, periwinkle, lavender,
+# orange), and letting the top of it move with the accent both breaks the
+# scale and, under the blue accent, makes max indistinguishable from every
+# other value on the row.
+EFFORT_MAX="$CLAUDE_ORANGE"
 
 # ---------------------------------------------------------------------------
 # Formatting helpers.
@@ -135,6 +147,7 @@ label() {
       cost_alltime) LBL='💳' ;;
       rate_five)    LBL='🕐' ;;
       rate_week)    LBL='🔄' ;;
+      rate_model)   LBL='⚡' ;;
       workspace)    LBL='📂' ;;
       repo)         LBL='🌐' ;;
       branch)       LBL='🌿' ;;
@@ -146,11 +159,12 @@ label() {
       context)      LBL='context:' ;;
       cost_session) LBL='current session:' ;;
       cost_today)   LBL='today:' ;;
-      cost_week)    LBL='week:' ;;
-      cost_month)   LBL='month:' ;;
+      cost_week)    LBL='weekly:' ;;
+      cost_month)   LBL='monthly:' ;;
       cost_alltime) LBL='all-time:' ;;
       rate_five)    LBL='5 hours session:' ;;
       rate_week)    LBL='weekly session:' ;;
+      rate_model)   LBL='weekly fable:' ;;
       workspace)    LBL='workspace:' ;;
       repo)         LBL='repo:' ;;
       branch)       LBL='branch:' ;;
@@ -185,6 +199,25 @@ fmt_tokens_pair() {
       BEGIN { printf "%s\037%s", fmt(u), fmt(t) }
     ' 2>/dev/null
   )
+}
+
+# A path into PATHOUT with every "/" left in the default foreground and the
+# segments between them in the accent. The separators are punctuation, the
+# same argument the "@" before a branch gets, and a long path reads as a
+# path rather than one unbroken block of color.
+#
+# All bash: the loop is parameter substitution only, so this costs no fork
+# however deep the path is.
+color_path() {
+  local rest="$1" part out=""
+  while :; do
+    case "$rest" in
+      */*) part="${rest%%/*}"; rest="${rest#*/}"
+         out="${out}${ORANGE}${part}${RESET}/" ;;
+      *) break ;;
+    esac
+  done
+  printf -v PATHOUT '%b' "${out}${ORANGE}${rest}${RESET}"
 }
 
 # Colored block bar for a percentage (0-100) into BAR, e.g. "[███░░░░░░░]".
@@ -253,11 +286,12 @@ fmt_time() {
 
 # Unix epoch -> RESETSTR: local time, prefixed with the date only when it
 # is not today ("6:19am", or "Jul 11, 6:19am"). An unparseable epoch yields
-# nothing, so the caller drops the "(resets ...)" part rather than
-# rendering "(resets , )".
+# nothing, so the caller drops the parenthesised clock entirely rather than
+# rendering "( , )".
 fmt_reset() {
   local epoch="$1" reset_date today
   RESETSTR=""
+  RESETDATE=""
   [ -z "$epoch" ] && return
   epoch_date "$epoch" "+%Y-%m-%d" || return
   reset_date="$EPOCHOUT"
@@ -271,7 +305,11 @@ fmt_reset() {
     # "%e" pads a single-digit day with a space ("Sep  9"); collapse it the
     # way the old `sed 's/  */ /g'` did.
     epoch_date "$epoch" "+%b %e"
-    RESETSTR="${EPOCHOUT//  / }, $TIMESTR"
+    # The date half is kept apart from the time half so the caller can leave
+    # the comma between them in the default fg, the way every other piece of
+    # punctuation in a row is.
+    RESETDATE="${EPOCHOUT//  / }"
+    RESETSTR="$RESETDATE, $TIMESTR"
   else
     RESETSTR="$TIMESTR"
   fi
@@ -337,8 +375,12 @@ render_rate_window() {
   local pct="$2"
   fmt_reset "$3"
   label "$1"
-  if [ -n "$RESETSTR" ]; then
-    printf -v SEG '%s %b%.0f%%%b used (resets %b%s%b)' \
+  if [ -n "$RESETDATE" ]; then
+    printf -v SEG '%s %b%.0f%%%b used (%b%s%b, %b%s%b)' \
+      "$LBL" "$ORANGE" "$pct" "$RESET" \
+      "$ORANGE" "$RESETDATE" "$RESET" "$ORANGE" "$TIMESTR" "$RESET"
+  elif [ -n "$RESETSTR" ]; then
+    printf -v SEG '%s %b%.0f%%%b used (%b%s%b)' \
       "$LBL" "$ORANGE" "$pct" "$RESET" "$ORANGE" "$RESETSTR" "$RESET"
   else
     printf -v SEG '%s %b%.0f%%%b used' "$LBL" "$ORANGE" "$pct" "$RESET"
@@ -397,6 +439,7 @@ obj($setraw)  as $set |
 obj($costraw) as $cc  |
 obj($authraw) as $au  |
 obj($rateraw) as $rc  |
+obj($usageraw) as $us |
 
 # Part visibility. Raw tostring values, not `.key // true`: jq treats false
 # as empty, so `//` would un-hide a hidden part. A missing key reads
@@ -419,6 +462,10 @@ obj($rateraw) as $rc  |
 # it stays on the four-line layout its owner already had. An unparseable
 # config also lands here as empty, which is the same answer a fresh install
 # gets, and no worse than any other fail-open default in this file.
+# The accent color. Anything but the exact word "blue" reads as orange, so
+# a hand-edited value can never leave the row in a color nobody chose, and a
+# config written before this key existed keeps the look it had.
+(if ($cfg.color | tostring) == "blue" then "blue" else "orange" end) as $cfg_color |
 (if ($cfg | length) == 0 then "simple"
  else (($cfg.mode // "detail") | tostring) end) as $cfg_mode |
 ($cfg.disabled | tostring) as $cfg_disabled |
@@ -439,6 +486,17 @@ obj($rateraw) as $rc  |
 (($pl.rate_limits // {}) | if type == "object" then . else {} end) as $p |
 (($p | length) > 0) as $rate_has |
 ($set.advisorModel // "") as $adv |
+($pl.version // "") as $ccver |
+
+# Per-model weekly window, from the cache usage_cache_refresh.sh writes.
+# Keyed by the display name the server itself sends; "Fable" is the only one rendered,
+# and a cache without it (any other plan, or a probe that never ran) leaves
+# all three fields empty and the segment is skipped.
+(($us.models? | objects) // {}) as $um |
+(($um["Fable"] | objects) // {}) as $fab |
+(($fab.resets_at | numbers) // 0) as $fab_reset |
+(($fab | length) > 0 and $fab_reset > $now) as $fab_live |
+($us.updated_at // 0) as $u_upd |
 
 # Token counts formatted here in exact integer arithmetic, so the common
 # render needs no awk fork at all. Rounding one decimal place from a
@@ -573,6 +631,18 @@ def show($w; $v):
   (if $showrate then ($s.resets_at // "") else "" end),
   (if $showrate then ($merged | tojson) else "" end),
   (if $showrate then (($merged | tojson) != ($c | tojson)) else false end),
+  $u_upd, $ccver, $cfg_color,
+  # Both empty unless the window is present AND still open. An expired one
+  # is dropped rather than frozen: Claude Code does the same with its own
+  # windows, and a stale weekly number is worse than no number. Nothing here
+  # ever renders a placeholder 0%.
+  (if $fab_live then (($fab.percent | numbers) // 0) else "" end),
+  # The reset stamp comes from the plan weekly window, not from the usage
+  # endpoint: the two describe the same weekly reset but sit minutes apart
+  # (different clocks, different rounding), and one row showing two weekly
+  # resets reads as a bug. The endpoint stamp is the fallback for a session
+  # whose weekly window has already been dropped from the payload.
+  (if $fab_live then ((($s.resets_at | numbers) // $fab_reset)) else "" end),
   $cfg_mode
 ] | map(tostring) | join($sep)
 '
@@ -626,6 +696,7 @@ read_all() {
   nut_jq_file_arg costraw "$NUT_COST_CACHE"
   nut_jq_file_arg authraw "$NUT_AUTH_CACHE"
   nut_jq_file_arg rateraw "$NUT_RATE_CACHE"
+  nut_jq_file_arg usageraw "$NUT_USAGE_CACHE"
 
   # Defaults for the case where jq is missing or errors: every part shown,
   # emoji off, active. The statusline degrades to what the payload alone
@@ -638,7 +709,9 @@ read_all() {
   auth_plan=""; auth_updated_at=0; auth_sig=""
   five_show=""; five_pct=""; five_reset=""
   week_show=""; week_pct=""; week_reset=""
-  rate_new=""; rate_changed=false; cfg_mode="detail"
+  rate_new=""; rate_changed=false
+  usage_updated_at=0; cc_version=""; cfg_color="orange"; fable_pct=""; fable_reset=""
+  cfg_mode="detail"
 
   IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens \
       cost session_id ws_dir repo_owner repo_name rate_has \
@@ -647,7 +720,9 @@ read_all() {
       today_cost weekly_cost monthly_cost all_time_cost cost_updated_at \
       auth_plan auth_updated_at auth_sig \
       five_show five_pct five_reset week_show week_pct week_reset \
-      rate_new rate_changed cfg_mode < <(jq "${NUT_JQ_ARGS[@]}" "$NUT_JQ_PROG" 2>/dev/null)
+      rate_new rate_changed \
+      usage_updated_at cc_version cfg_color fable_pct fable_reset \
+      cfg_mode < <(jq "${NUT_JQ_ARGS[@]}" "$NUT_JQ_PROG" 2>/dev/null)
 
   # Belt and braces behind the -j above: only the final field could ever
   # pick up a stray carriage return, so strip one if some other jq build
@@ -670,6 +745,11 @@ read_all() {
   [ "$cfg_session" = "false" ] && show_rate=false
   [ "$cfg_workspace" = "false" ] && show_workspace=false
   [ "$cfg_emoji" = "true" ] && emoji_mode=true
+  # The accent every value is drawn in. ORANGE is set at file scope, before
+  # any config has been read, so the swap happens here rather than there.
+  # EFFORT_MAX is deliberately not touched: it holds CLAUDE_ORANGE and stays
+  # there whatever the accent is.
+  [ "$cfg_color" = blue ] && ORANGE="$BLUE"
   # Anything but the exact word "simple" renders the four lines, so a
   # hand-edited or truncated value can never produce a row nobody expects.
   [ "$cfg_mode" = "simple" ] || cfg_mode="detail"
@@ -735,6 +815,28 @@ spawn_auth_probe_if_stale() {
   if [ "$show_rate" = true ] && [ -n "$session_id" ] && [ "$auth_age" -ge "$AUTH_CACHE_MAX_AGE" ] \
      && command -v claude >/dev/null 2>&1 && [ -f "$NUT_BIN_DIR/auth_cache_refresh.sh" ]; then
     nut_spawn bash "$NUT_BIN_DIR/auth_cache_refresh.sh" "$session_id"
+  fi
+}
+
+# Refresh the per-model weekly window in the background. The gate is the
+# same shape as the other two, with two extra conditions that are the whole
+# reason this stays cheap and quiet:
+#  - the session part has to be shown, since that is what this rides on
+#  - the verdict must not be "none": a metered session has no claude.ai plan
+#    and the endpoint has nothing to say about it, so it is never called.
+# An unknown verdict (no probe yet) does not spawn either, so the first
+# render of a fresh session never fires a network call: the auth probe lands
+# first and this follows on a later render.
+spawn_usage_probe_if_stale() {
+  local usage_age
+  as_epoch "$usage_updated_at"
+  usage_age=$(( NOW - AS_EPOCH ))
+  [ "$usage_age" -lt 0 ] && usage_age="$USAGE_CACHE_MAX_AGE"
+  if [ "$show_rate" = true ] && [ -n "$auth_plan" ] && [ "$auth_plan" != none ] \
+     && [ "$usage_age" -ge "$USAGE_CACHE_MAX_AGE" ] \
+     && command -v curl >/dev/null 2>&1 \
+     && [ -f "$NUT_BIN_DIR/usage_cache_refresh.sh" ]; then
+    nut_spawn bash "$NUT_BIN_DIR/usage_cache_refresh.sh" "$cc_version"
   fi
 }
 
@@ -839,6 +941,12 @@ build_line3() {
     render_rate_window rate_week "$week_pct" "$week_reset"
     line3+=("$SEG")
   fi
+  # The per-model window is additive: it renders only when the probe has
+  # actually seen one, and its absence changes nothing else on the row.
+  if [ -n "$fable_pct" ]; then
+    render_rate_window rate_model "$fable_pct" "$fable_reset"
+    line3+=("$SEG")
+  fi
 }
 
 # Where the session is, which repo, which branch. Each segment is
@@ -857,7 +965,8 @@ build_line4() {
       *)         ws_display="$ws_dir" ;;
     esac
     label workspace
-    printf -v seg '%s %b%s%b' "$LBL" "$ORANGE" "$ws_display" "$RESET"
+    color_path "$ws_display"
+    printf -v seg '%s %s' "$LBL" "$PATHOUT"
     line4+=("$seg")
   fi
   if [ -n "$repo_owner" ] && [ -n "$repo_name" ]; then
@@ -867,13 +976,17 @@ build_line4() {
   fi
   if [ -n "$repo_display" ]; then
     label repo
-    printf -v seg '%s %b%s%b' "$LBL" "$ORANGE" "$repo_display" "$RESET"
+    color_path "$repo_display"
+    printf -v seg '%s %s' "$LBL" "$PATHOUT"
     line4+=("$seg")
   fi
   git_branch "$ws_dir"
   if [ -n "$BRANCH" ]; then
     label branch
-    printf -v seg '%s %b%s%b' "$LBL" "$ORANGE" "$BRANCH" "$RESET"
+    # A branch name can carry slashes too ("feature/x"), and they are the
+    # same punctuation as a path separator.
+    color_path "$BRANCH"
+    printf -v seg '%s %s' "$LBL" "$PATHOUT"
     line4+=("$seg")
   fi
 }
@@ -931,7 +1044,7 @@ simple_rate() {  # label_key short_name pct reset
   label "$1"
   [ "$emoji_mode" = true ] || LBL="$2"
   if [ -n "$CDSTR" ]; then
-    printf -v SEG '%s %b%.0f%%%b (%s)' "$LBL" "$ORANGE" "$pct" "$RESET" "$CDSTR"
+    printf -v SEG '%s %b%.0f%%%b (%b%s%b)' "$LBL" "$ORANGE" "$pct" "$RESET" "$ORANGE" "$CDSTR" "$RESET"
   else
     printf -v SEG '%s %b%.0f%%%b' "$LBL" "$ORANGE" "$pct" "$RESET"
   fi
@@ -963,16 +1076,27 @@ simple_location() {
     esac
   fi
   [ -n "$display" ] || return
-  label workspace
-  if [ "$emoji_mode" = true ]; then
-    printf -v SEG '%s %b%s%b' "$LBL" "$ORANGE" "$display" "$RESET"
-    if [ -n "$BRANCH" ]; then
-      label branch
-      printf -v SEG '%s %s %b%s%b' "$SEG" "$LBL" "$ORANGE" "$BRANCH" "$RESET"
-    fi
+  # The repo globe, not the workspace folder: this one segment is the repo
+  # and its branch, which is what the detail row uses the globe for.
+  label repo
+  color_path "$display"
+  if [ "$emoji_mode" = true ] && [ -n "$BRANCH" ]; then
+    # One "<location>@<branch>" segment in both label styles, so the row has
+    # the same shape either way and emoji mode costs one icon, not two.
+    printf -v SEG '%s %s@' "$LBL" "$PATHOUT"
+    color_path "$BRANCH"
+    SEG="$SEG$PATHOUT"
+  elif [ "$emoji_mode" = true ]; then
+    printf -v SEG '%s %s' "$LBL" "$PATHOUT"
+  elif [ -n "$BRANCH" ]; then
+    # The "@" is punctuation, not a value: it stays in the default fg, the
+    # same as the labels and the " | " separators, so only the repo and the
+    # branch carry the brand color.
+    printf -v SEG '%s@' "$PATHOUT"
+    color_path "$BRANCH"
+    SEG="$SEG$PATHOUT"
   else
-    [ -n "$BRANCH" ] && display="$display@$BRANCH"
-    printf -v SEG '%b%s%b' "$ORANGE" "$display" "$RESET"
+    printf -v SEG '%s' "$PATHOUT"
   fi
 }
 
@@ -1001,11 +1125,11 @@ build_simple() {
   fi
   if [ -n "$advisor" ]; then
     label advisor
-    [ "$emoji_mode" = true ] || LBL="adv"
+    [ "$emoji_mode" = true ] || LBL="adv:"
     printf -v seg '%s %b%s%b' "$LBL" "$ORANGE" "$advisor" "$RESET"
     simple+=("$seg")
   fi
-  # Counts, not the percentage bar: the bar costs ten cells and the counts
+  # Counts, not the percentage bar: the bar costs twelve cells and the counts
   # are the number a user acts on.
   [ -z "$ctx_used_tokens" ] && ctx_used_tokens=0
   if [ -n "$ctx_total_tokens" ]; then
@@ -1016,24 +1140,24 @@ build_simple() {
       TOTAL_FMT="$total_fmt_jq"
     fi
     label context
-    [ "$emoji_mode" = true ] || LBL="ctx"
+    [ "$emoji_mode" = true ] || LBL="ctx:"
     printf -v seg '%s %b%s%b/%b%s%b' "$LBL" "$ORANGE" "$USED_FMT" "$RESET" "$ORANGE" "$TOTAL_FMT" "$RESET"
     simple+=("$seg")
   fi
-  if [ "$show_cost" = true ] && [ -n "$cost" ]; then
-    if [ "$emoji_mode" = true ]; then
-      label cost_session; cost_item "$LBL" "$cost"; simple+=("$SEG")
-    else
-      printf -v seg '%b%.2f$%b' "$ORANGE" "$cost" "$RESET"
-      simple+=("$seg")
-    fi
-  fi
+  # No cost segment at all in this layout, whatever the cost part says: the
+  # detail row carries the five cost windows, and the one that fits here (the
+  # current session) is the least useful of them. The part toggle still
+  # governs the cost REFRESH, so switching it off in simple mode also stops
+  # the ccusage scan, exactly as it does in detail.
   if [ "$show_rate" = true ]; then
     if [ "$five_show" != false ]; then
-      simple_rate rate_five 5h "$five_pct" "$five_reset"; simple+=("$SEG")
+      simple_rate rate_five 5h: "$five_pct" "$five_reset"; simple+=("$SEG")
     fi
     if [ "$week_show" != false ]; then
-      simple_rate rate_week 7d "$week_pct" "$week_reset"; simple+=("$SEG")
+      simple_rate rate_week 7d: "$week_pct" "$week_reset"; simple+=("$SEG")
+    fi
+    if [ -n "$fable_pct" ]; then
+      simple_rate rate_model fable: "$fable_pct" "$fable_reset"; simple+=("$SEG")
     fi
   fi
   if [ "$show_workspace" = true ]; then
@@ -1048,11 +1172,14 @@ build_simple() {
 print_lines() {
   join_segments "${line1[@]}"
   printf '%s\n' "$JOINED"
-  if [ "$show_cost" = true ] && [ "${#line2[@]}" -gt 0 ]; then
-    join_segments "${line2[@]}"; printf '%s\n' "$JOINED"
-  fi
+  # The rate windows print above the cost windows. The arrays keep their
+  # build order (line2 is cost, line3 is the rate windows); only the order
+  # they are printed in swapped.
   if [ "$show_rate" = true ] && [ "${#line3[@]}" -gt 0 ]; then
     join_segments "${line3[@]}"; printf '%s\n' "$JOINED"
+  fi
+  if [ "$show_cost" = true ] && [ "${#line2[@]}" -gt 0 ]; then
+    join_segments "${line2[@]}"; printf '%s\n' "$JOINED"
   fi
   if [ "$show_workspace" = true ] && [ "${#line4[@]}" -gt 0 ]; then
     join_segments "${line4[@]}"; printf '%s\n' "$JOINED"
@@ -1075,6 +1202,7 @@ main() {
   [ "$disabled" = true ] && exit 0
   spawn_cost_refresh_if_stale
   spawn_auth_probe_if_stale
+  spawn_usage_probe_if_stale
   write_rate_cache_if_changed
   if [ "$cfg_mode" = simple ]; then
     build_simple

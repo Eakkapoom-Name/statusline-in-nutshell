@@ -1,6 +1,6 @@
 ---
 name: nutshell-status
-description: Print whether the nutshell statusline is active or inactive, which layout mode it uses, and which of its parts are on or off, covering cost, session, workspace and emoji. Read-only. Use when the user asks what their statusline is showing or whether a line, a layout or emoji mode is on.
+description: Print whether the nutshell statusline is active or inactive, which layout mode it uses, and which of its parts are on or off, covering session, cost, workspace and emoji. Read-only. Use when the user asks what their statusline is showing or whether a line, a layout or emoji mode is on.
 ---
 
 # Statusline state

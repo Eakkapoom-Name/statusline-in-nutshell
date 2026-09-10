@@ -1,7 +1,7 @@
 ---
 name: nutshell-show
-description: Turn on one line of the nutshell statusline (cost, session or workspace) or all three at once. The model line is always on. Use when the user asks to show, display, enable or bring back a statusline section. Emoji labels are a separate switch, handled by the nutshell-emoji skill.
-argument-hint: "[all|cost|session|workspace]"
+description: Turn on one line of the nutshell statusline (session, cost or workspace) or all three at once. The model line is always on. Use when the user asks to show, display, enable or bring back a statusline section. Emoji labels are a separate switch, handled by the nutshell-emoji skill.
+argument-hint: "[all|session|cost|workspace]"
 ---
 
 # Show a statusline part
@@ -21,7 +21,7 @@ If that line above is blank, or still shows the unreplaced placeholder (a
 dollar sign followed by a zero), there is no argument.
 
 - No argument, or `all`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh all on`
-- `cost`, `session` or `workspace`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh <part> on`
+- `session`, `cost` or `workspace`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh <part> on`
 - `model`, `emoji`, or anything else: do not run the script, and say
   nothing (see below).
 

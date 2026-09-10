@@ -1,7 +1,7 @@
 ---
 name: nutshell-hide
-description: Turn off one line of the nutshell statusline (cost, session or workspace) or all three, keeping the statusline itself registered. The model line cannot be hidden. Use when the user asks to hide or blank a statusline section. Not for handing the row back to Claude Code, which is the nutshell-inactive skill, and not for emoji labels, which is the nutshell-emoji skill.
-argument-hint: "[all|cost|session|workspace]"
+description: Turn off one line of the nutshell statusline (session, cost or workspace) or all three, keeping the statusline itself registered. The model line cannot be hidden. Use when the user asks to hide or blank a statusline section. Not for handing the row back to Claude Code, which is the nutshell-inactive skill, and not for emoji labels, which is the nutshell-emoji skill.
+argument-hint: "[all|session|cost|workspace]"
 ---
 
 # Hide a statusline part
@@ -24,8 +24,8 @@ No confirmation is needed. The model line cannot be hidden, so no
 combination of these commands can leave the statusline blank.
 
 - No argument, or `all`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh all off`
-  (hides cost, session and workspace; model stays on)
-- `cost`, `session` or `workspace`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh <part> off`
+  (hides session, cost and workspace; model stays on)
+- `session`, `cost` or `workspace`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh <part> off`
 - `model`, `emoji`, or anything else: do not run the script, and say
   nothing (see below).
 

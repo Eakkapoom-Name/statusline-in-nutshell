@@ -37,19 +37,23 @@ NUT_COST_LEDGER="$NUT_STATE_DIR/cost_ledger.json"
 NUT_COST_BASELINE="$NUT_STATE_DIR/cost_baseline.json"
 NUT_RATE_CACHE="$NUT_STATE_DIR/rate_cache.json"
 NUT_AUTH_CACHE="$NUT_STATE_DIR/auth_cache.json"
+# Per-model weekly windows from the account usage endpoint. Written only by
+# usage_cache_refresh.sh, the one job in this plugin that touches the network.
+NUT_USAGE_CACHE="$NUT_STATE_DIR/usage_cache.json"
 # Extra per-source ledgers written by other tools: ${NUT_EXTRA_LEDGER_PREFIX}<source>.json
 NUT_EXTRA_LEDGER_PREFIX="$NUT_STATE_DIR/ledger_"
 
 NUT_SYNC_LOCK="$NUT_LOCK_DIR/sync.lock"
 NUT_COST_LOCK="$NUT_LOCK_DIR/cost_cache.lock"
 NUT_AUTH_LOCK="$NUT_LOCK_DIR/auth_cache.lock"
+NUT_USAGE_LOCK="$NUT_LOCK_DIR/usage_cache.lock"
 
 NUT_SETTINGS="$NUT_CLAUDE_DIR/settings.json"
 NUT_CREDENTIALS="$NUT_CLAUDE_DIR/.credentials.json"
 
 # The scripts installed into bin/, in install order. This library goes
 # first so no script ever lands before the file it sources.
-NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh cost_cache_refresh.sh auth_cache_refresh.sh"
+NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh cost_cache_refresh.sh auth_cache_refresh.sh usage_cache_refresh.sh"
 
 # The settings.json registration. This is the only copy: sync.sh, the setup
 # skill (which runs sync.sh) and statusline-toggle.sh all register from it,
@@ -205,6 +209,9 @@ nut_spawn() {
 NUT_LOCK_STALE_SYNC=60
 NUT_LOCK_STALE_AUTH=60
 NUT_LOCK_STALE_COST=120
+# One HTTP call under an 8s curl limit inside a 15s nut_timeout, so a holder
+# still on its feet after 60s is a dead one.
+NUT_LOCK_STALE_USAGE=60
 
 # Try to take lock $1, whose holder is stale after $2 seconds. Returns 0
 # with the lock held and an EXIT trap set to release it, 1 when someone

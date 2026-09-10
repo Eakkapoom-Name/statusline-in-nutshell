@@ -1,10 +1,10 @@
 ---
-name: nutshell-mode
-description: (experimental) Switch the nutshell statusline between the one-line simple layout and the four-line detail layout. No argument toggles the mode, or say simple or detail. Use when the user mentions one line, single line, compact, simple, detail, shorter or longer statusline.
-argument-hint: "[simple|detail]"
+name: nutshell-color
+description: (experimental) Switch the accent color the nutshell statusline draws its values in, between an orange and a blue theme. No argument toggles the color, or say orange or blue. Use when the user mentions statusline color, accent color, theme, or an orange or blue statusline.
+argument-hint: "[orange|blue]"
 ---
 
-# Simple or detail layout (experimental)
+# Statusline accent color (experimental)
 
 If `~/.claude/nutshell/bin/statusline-toggle.sh` does not exist, invoke the setup skill
 with the Skill tool first (`nutshell:nutshell-setup` if that name is listed,
@@ -19,25 +19,27 @@ Argument: $0
 If that line above is blank, or still shows the unreplaced placeholder (a
 dollar sign followed by a zero), there is no argument.
 
-- No argument, or `toggle`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh mode` (the script
-  defaults to toggle)
-- `simple` or `detail`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh mode simple|detail`
+- No argument, or `toggle`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh color` (the
+  script defaults to toggle)
+- `orange` or `blue`: `bash ~/.claude/nutshell/bin/statusline-toggle.sh color orange|blue`
 - Anything else: do not run the script, and say nothing (see below).
 
-`simple` is what a new install starts on; an install that predates 0.3.4
-keeps `detail` until its owner asks, so an upgrade never changes layout
-under them. `detail` is the four-row layout: model, advisor and the
-context bar, then the rate windows, then the cost windows, then the
-workspace. `simple` is one row holding model and effort, the advisor when
-there is one, the context counts, both rate windows with a countdown to
-their reset, and the repo with its branch. The context bar, the reset clock
-times and every cost window are what simple leaves out to fit, so the cost
-part changes nothing there and only the detail layout shows spend.
+Two themes: `orange` (`#D97757`, the default, and what a fresh install
+starts on) and `blue` (`#8AB4F8`). The color applies to every value the row
+draws in the accent: the model name, the advisor, the context counts and
+the filled half of its bar, every cost figure, the rate percentages and
+their reset times, and the location. Labels, separators and punctuation
+stay in the default foreground either way, and the five per-effort colors
+(yellow, green, periwinkle, lavender, orange) are unchanged: max effort
+keeps its orange under both themes, since the effort scale is fixed and a
+max that matched the accent would not stand out from the rest of the row.
 
-The mode is independent of which parts are shown and of emoji labels:
-`nutshell-show` and `nutshell-hide` work in both layouts, where a hidden
-part drops its line in detail and its segment in simple, and icons replace
-the words in both. Never hand-edit `config.json`; the script is the only writer.
+Experimental: the color is a `config.json` key with no other machinery
+behind it, and it may change.
+
+The color is independent of the layout mode, of which parts are shown and
+of emoji labels. Never hand-edit `config.json`; the script is the only
+writer.
 
 ## How to answer
 
@@ -63,14 +65,15 @@ Before the script runs:
   command setup showed, then ask again." Stop.
 - The `statusline` row reads `inactive`: "The statusline is inactive. Run
   `/nutshell:nutshell-active` to activate." Stop.
-- Any argument other than `simple`, `detail` or `toggle`: say nothing at
-  all. Do not run the script, do not name the argument.
+- Any argument other than `orange`, `blue` or `toggle`: say nothing at all.
+  Do not run the script, do not name the argument.
 
 After the script ran:
 
-- Say nothing at all, whatever happened: a mode that changed, a mode that
+- Say nothing at all, whatever happened: a color that changed, a color that
   was already set, a non-zero exit, a config the script could not write, an
   argument the script rejected. No output, no code block, no confirmation,
-  no error. The row itself is the only report. A write that failed leaves
-  the layout unchanged, which is the same thing the user sees for a mode
-  that was already there.
+  no error. The row itself is the only report, and the script prints nothing
+  on success for the same reason. A write that failed leaves the color
+  unchanged, which is the same thing the user sees for a color that was
+  already there.
