@@ -55,6 +55,15 @@ Both layouts draw their values in one accent color, orange by default, and
 
 ## What You Get
 
+- [`/nutshell:nutshell-setup`](#nutshellnutshell-setup) installs or repairs
+  the scripts and the registration.
+- [`/nutshell:nutshell-mode`](#nutshellnutshell-mode) moves between the
+  one-line simple layout a new install starts on and the four-line detail
+  one.
+- [`/nutshell:nutshell-color`](#nutshellnutshell-color) switches the accent
+  every value is drawn in between the orange theme and a blue one.
+- [`/nutshell:nutshell-status`](#nutshellnutshell-status) prints what is on
+  and what is off.
 - [`/nutshell:nutshell-show`](#nutshellnutshell-show) turns the session, cost
   or workspace line on, one at a time or all three at once. Cost starts off
   on a new install, so this is how you ask for it.
@@ -63,21 +72,12 @@ Both layouts draw their values in one accent color, orange by default, and
   goes blank.
 - [`/nutshell:nutshell-emoji`](#nutshellnutshell-emoji) switches between text
   labels and icons.
-- [`/nutshell:nutshell-mode`](#nutshellnutshell-mode) moves between the
-  one-line simple layout a new install starts on and the four-line detail
-  one.
-- [`/nutshell:nutshell-color`](#nutshellnutshell-color) switches the accent
-  every value is drawn in between the orange theme and a blue one.
-- [`/nutshell:nutshell-inactive`](#nutshellnutshell-inactive) hands the row
-  back to Claude Code and stops the work behind it.
 - [`/nutshell:nutshell-active`](#nutshellnutshell-active) takes it back, with
   your line settings intact.
-- [`/nutshell:nutshell-status`](#nutshellnutshell-status) prints what is on
-  and what is off.
+- [`/nutshell:nutshell-inactive`](#nutshellnutshell-inactive) hands the row
+  back to Claude Code and stops the work behind it.
 - [`/nutshell:nutshell-reset-all-time-cost`](#nutshellnutshell-reset-all-time-cost)
   wipes the all-time cost counter.
-- [`/nutshell:nutshell-setup`](#nutshellnutshell-setup) installs or repairs
-  the scripts and the registration.
 - [`/nutshell:nutshell-uninstall`](#nutshellnutshell-uninstall) removes both.
 
 ## Notice
@@ -167,6 +167,122 @@ Type the command for what you want, or just describe it in plain language:
 Each command has its own description, so a plain request lands on the right
 one.
 
+### /nutshell:nutshell-setup
+
+Installs or repairs the scripts and the `statusLine` registration, and checks
+the dependencies first.
+
+The dependency check is a read-only report: what the plugin needs, what your
+machine has, and the exact command that closes each gap on your OS. It needs
+no `jq` itself, so it works on the machine it is diagnosing.
+
+Anything missing is then installed for you, on Linux, macOS, WSL and Windows
+alike, after one question that names every package, its version and the
+channel it would come from. Nothing is installed before you answer, and
+declining is a complete answer: the install continues and the report says
+which row stays empty. Three things are never installed on your behalf:
+Homebrew, a Node runtime, and `claude` itself, which is Claude Code and can
+only be a `PATH` problem. A fix needing a `sudo` password is handed back to
+you rather than run, since a command asking for a password inside a tool call
+has no terminal to ask on.
+
+Then it runs the same sync script as the `SessionStart` hook, which re-copies
+any file that differs from the bundled one and restores the registration.
+
+The registration step is skipped, and reported rather than forced, in three
+cases: the statusline is inactive, `settings.json` registers someone else's
+statusline, or `settings.json` is not a JSON object.
+
+```bash
+/nutshell:nutshell-setup
+```
+
+> [!NOTE]
+> The hook already syncs the scripts at every session start, but it never
+> checks or installs dependencies: installing a package is a change to your
+> machine, and a hook that fires at every session start must not make one. Run this when the statusline is missing,
+> or when a line stays empty and you want to know why.
+
+### /nutshell:nutshell-mode
+
+Moves between the two layouts. It takes `simple` or `detail`, and with no
+argument at all it toggles to whichever one you are not on. A new install
+starts on `simple`, while an install older than 0.3.4 stays on `detail`, so
+an upgrade never changes the row under you.
+
+Simple drops the context bar, the clock time each window resets at, and every
+cost window, which is what lets the rest fit on one line. Spend is a
+detail-layout row: switching the cost part on changes nothing you can see in
+simple, though it still governs the background `ccusage` scan, so switching it
+off stops that work in either layout. Parts otherwise behave the same either
+way, and emoji labels apply to both.
+
+Switch between them:
+
+```bash
+/nutshell:nutshell-mode
+```
+
+Switch to the one-line layout:
+
+```bash
+/nutshell:nutshell-mode simple
+```
+
+Switch back to the four-line layout:
+
+```bash
+/nutshell:nutshell-mode detail
+```
+
+### /nutshell:nutshell-color
+
+Switches the accent every value is drawn in. It takes `orange` or `blue`, and
+with no argument at all it toggles. A fresh install starts on orange, and so
+does an install upgrading from a version that had no color at all, so nobody's
+row changes under them.
+
+The accent covers the model name, the advisor, the context counts and the
+filled half of its bar, every cost figure, the rate percentages and their
+reset times, and the location. Labels, separators and punctuation keep the
+terminal's own foreground either way, and the five effort colors are
+untouched, max effort included: the effort scale is fixed, and a max that
+matched the accent would stop standing out.
+
+This one is experimental, like the `fable` segment: it is a `config.json` key
+with nothing else behind it, and it may change.
+
+Switch it:
+
+```bash
+/nutshell:nutshell-color
+```
+
+Pick one:
+
+```bash
+/nutshell:nutshell-color blue
+```
+
+```bash
+/nutshell:nutshell-color orange
+```
+
+> [!NOTE]
+> The command prints nothing at all, whatever happens, and the color is not
+> in what [`/nutshell:nutshell-status`](#nutshellnutshell-status) reports. The
+> row itself is the only report there is.
+
+### /nutshell:nutshell-status
+
+Prints where everything stands: whether the statusline is active, which
+layout it is on, and the state of session, cost, workspace and emoji. Model is
+always on and the accent color is deliberately not in the table.
+
+```bash
+/nutshell:nutshell-status
+```
+
 ### /nutshell:nutshell-show
 
 Turns a part back on, which means its line in `detail` and its segment in
@@ -252,75 +368,27 @@ Switch back to text labels:
 /nutshell:nutshell-emoji off
 ```
 
-### /nutshell:nutshell-mode
+### /nutshell:nutshell-active
 
-Moves between the two layouts. It takes `simple` or `detail`, and with no
-argument at all it toggles to whichever one you are not on. A new install
-starts on `simple`, while an install older than 0.3.4 stays on `detail`, so
-an upgrade never changes the row under you.
+Takes the row back, with your line settings intact.
 
-Simple drops the context bar, the clock time each window resets at, and every
-cost window, which is what lets the rest fit on one line. Spend is a
-detail-layout row: switching the cost part on changes nothing you can see in
-simple, though it still governs the background `ccusage` scan, so switching it
-off stops that work in either layout. Parts otherwise behave the same either
-way, and emoji labels apply to both.
-
-Switch between them:
+Take it back:
 
 ```bash
-/nutshell:nutshell-mode
+/nutshell:nutshell-active
 ```
 
-Switch to the one-line layout:
+Take over a statusline registered by something else:
 
 ```bash
-/nutshell:nutshell-mode simple
-```
-
-Switch back to the four-line layout:
-
-```bash
-/nutshell:nutshell-mode detail
-```
-
-### /nutshell:nutshell-color
-
-Switches the accent every value is drawn in. It takes `orange` or `blue`, and
-with no argument at all it toggles. A fresh install starts on orange, and so
-does an install upgrading from a version that had no color at all, so nobody's
-row changes under them.
-
-The accent covers the model name, the advisor, the context counts and the
-filled half of its bar, every cost figure, the rate percentages and their
-reset times, and the location. Labels, separators and punctuation keep the
-terminal's own foreground either way, and the five effort colors are
-untouched, max effort included: the effort scale is fixed, and a max that
-matched the accent would stop standing out.
-
-This one is experimental, like the `fable` segment: it is a `config.json` key
-with nothing else behind it, and it may change.
-
-Switch it:
-
-```bash
-/nutshell:nutshell-color
-```
-
-Pick one:
-
-```bash
-/nutshell:nutshell-color blue
-```
-
-```bash
-/nutshell:nutshell-color orange
+/nutshell:nutshell-active --force
 ```
 
 > [!NOTE]
-> The command prints nothing at all, whatever happens, and the color is not
-> in what [`/nutshell:nutshell-status`](#nutshellnutshell-status) reports. The
-> row itself is the only report there is.
+> Neither `active` nor `inactive` touches a statusline this plugin did not
+> install. If `settings.json` registers something else, for example one written
+> by Claude Code's own `/statusline`, `inactive` refuses to delete it and
+> `active` refuses to overwrite it. `--force` takes over deliberately.
 
 ### /nutshell:nutshell-inactive
 
@@ -344,38 +412,6 @@ Hand the row back:
 /nutshell:nutshell-inactive
 ```
 
-### /nutshell:nutshell-active
-
-Takes the row back, with your line settings intact.
-
-Take it back:
-
-```bash
-/nutshell:nutshell-active
-```
-
-Take over a statusline registered by something else:
-
-```bash
-/nutshell:nutshell-active --force
-```
-
-> [!NOTE]
-> Neither `active` nor `inactive` touches a statusline this plugin did not
-> install. If `settings.json` registers something else, for example one written
-> by Claude Code's own `/statusline`, `inactive` refuses to delete it and
-> `active` refuses to overwrite it. `--force` takes over deliberately.
-
-### /nutshell:nutshell-status
-
-Prints where everything stands: whether the statusline is active, which
-layout it is on, and the state of session, cost, workspace and emoji. Model is
-always on and the accent color is deliberately not in the table.
-
-```bash
-/nutshell:nutshell-status
-```
-
 ### /nutshell:nutshell-reset-all-time-cost
 
 Wipes the all-time cost counter for good. Today, weekly and monthly are untouched.
@@ -384,42 +420,6 @@ It asks for confirmation first because there is no undo.
 ```bash
 /nutshell:nutshell-reset-all-time-cost
 ```
-
-### /nutshell:nutshell-setup
-
-Installs or repairs the scripts and the `statusLine` registration, and checks
-the dependencies first.
-
-The dependency check is a read-only report: what the plugin needs, what your
-machine has, and the exact command that closes each gap on your OS. It needs
-no `jq` itself, so it works on the machine it is diagnosing.
-
-Anything missing is then installed for you, on Linux, macOS, WSL and Windows
-alike, after one question that names every package, its version and the
-channel it would come from. Nothing is installed before you answer, and
-declining is a complete answer: the install continues and the report says
-which row stays empty. Three things are never installed on your behalf:
-Homebrew, a Node runtime, and `claude` itself, which is Claude Code and can
-only be a `PATH` problem. A fix needing a `sudo` password is handed back to
-you rather than run, since a command asking for a password inside a tool call
-has no terminal to ask on.
-
-Then it runs the same sync script as the `SessionStart` hook, which re-copies
-any file that differs from the bundled one and restores the registration.
-
-The registration step is skipped, and reported rather than forced, in three
-cases: the statusline is inactive, `settings.json` registers someone else's
-statusline, or `settings.json` is not a JSON object.
-
-```bash
-/nutshell:nutshell-setup
-```
-
-> [!NOTE]
-> The hook already syncs the scripts at every session start, but it never
-> checks or installs dependencies: installing a package is a change to your
-> machine, and a hook that fires at every session start must not make one. Run this when the statusline is missing,
-> or when a line stays empty and you want to know why.
 
 ### /nutshell:nutshell-uninstall
 
