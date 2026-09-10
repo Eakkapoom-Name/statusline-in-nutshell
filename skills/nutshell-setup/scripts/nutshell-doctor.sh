@@ -24,6 +24,8 @@
 # Exit status: 0 when every REQUIRED dependency is satisfied, 1 when one is
 # missing or too old. Optional gaps never fail the run, because the status
 # line works without them; they only cost the features named in the report.
+# One entry is optional as of 0.3.5: curl, which buys the per-model weekly
+# window and nothing else.
 
 # Locale pin, for the same reason nutshell-lib.sh pins it: a comma-decimal
 # locale changes how numbers print and compare.
@@ -133,12 +135,25 @@ EOF
     # everything about where the user looks when something else breaks.
     case "$(uname -r 2>/dev/null)" in *[Mm]icrosoft*) os_name="$os_name (WSL)" ;; esac
     ;;
+  # Git Bash, MSYS2 and Cygwin are three POSIX layers over the same
+  # Windows, and every one of them reports its own kernel string rather
+  # than Windows. They matter here because none of the Unix package
+  # managers exists on any of them, so without this arm os_kind stays
+  # "unknown" and every remedy below degrades to "install it with your
+  # package manager", which is no answer at all. The layer is named in
+  # os_name because it is what decides where a newly installed binary has
+  # to land to be on PATH. No os_version: there is no reliable way to read
+  # the Windows build number from these shells without shelling out to
+  # cmd, and nothing here needs it.
+  MINGW*)  os_kind="windows"; os_name="Windows (Git Bash)" ;;
+  MSYS*)   os_kind="windows"; os_name="Windows (MSYS2)" ;;
+  CYGWIN*) os_kind="windows"; os_name="Windows (Cygwin)" ;;
 esac
 : "${os_family:=$os_kind}"
 
 # Package managers present, in the order this script would reach for them.
 pkgmgrs=""
-for m in brew apt-get dnf pacman zypper npm bun nix; do
+for m in brew apt-get dnf pacman zypper scoop winget choco npm bun nix; do
   have "$m" && pkgmgrs="$pkgmgrs $m"
 done
 pkgmgrs="${pkgmgrs# }"
@@ -164,7 +179,36 @@ remedy_jq() {
               suse)   echo "sudo zypper install -y jq" ;;
               *)      have brew && echo "brew install jq" || echo "install jq with your package manager" ;;
             esac ;;
+    # Scoop first because it installs per user and needs no elevation;
+    # winget is second because it ships with Windows itself, and its
+    # machine-wide install can raise a UAC prompt; choco is last and needs
+    # an elevated shell outright. The trailing comment is stripped by
+    # nutshell-install-deps.sh before it runs the command.
+    windows)
+            if have scoop; then echo "scoop install jq"
+            elif have winget; then echo "winget install --id jqlang.jq -e --silent --accept-package-agreements --accept-source-agreements"
+            elif have choco; then echo "choco install jq -y   # needs an elevated shell"
+            else echo "install Scoop (https://scoop.sh) or use: winget install --id jqlang.jq -e"; fi ;;
     *)      echo "install jq with your package manager" ;;
+  esac
+}
+
+# curl ships with macOS and with Windows 10 and later, and with Git Bash, so
+# the only platform where it is genuinely absent is a slimmed-down Linux
+# image. Reported optional: the one thing it buys is the experimental
+# per-model weekly window, and nothing else in the plugin notices it.
+remedy_curl() {
+  case "$os_kind" in
+    macos)   echo "curl ships with macOS; check your PATH" ;;
+    windows) echo "curl ships with Windows 10 and later, and with Git Bash; check your PATH" ;;
+    linux)   case "$os_family" in
+               debian) echo "sudo apt-get install -y curl" ;;
+               fedora) echo "sudo dnf install -y curl" ;;
+               arch)   echo "sudo pacman -S --noconfirm curl" ;;
+               suse)   echo "sudo zypper install -y curl" ;;
+               *)      have brew && echo "brew install curl" || echo "install curl with your package manager" ;;
+             esac ;;
+    *)       echo "install curl with your package manager" ;;
   esac
 }
 
@@ -181,6 +225,9 @@ remedy_ccusage() {
   if have npm; then echo "npm install -g ccusage   # may need sudo with a system node"; return; fi
   if have bun; then echo "bun add -g ccusage"; return; fi
   if have nix; then echo "nix run github:ccusage/ccusage   # runs it, does not install it"; return; fi
+  if [ "$os_kind" = "windows" ]; then
+    echo "install Node (winget install --id OpenJS.NodeJS.LTS -e), then: npm install -g ccusage"; return
+  fi
   echo "no channel found: install Homebrew, Node (npm) or Bun first"
 }
 
@@ -335,7 +382,7 @@ if have ccusage; then
   fi
 else
   add_dep ccusage required missing - - "$(remedy_ccusage)" \
-    "today / week / month / all-time stay empty; reset-all-time unavailable"
+    "today / weekly / monthly / all-time stay empty; reset-all-time unavailable"
 fi
 
 # claude on PATH. Only used by the background probe that decides whether
@@ -345,6 +392,18 @@ if have claude; then
 else
   add_dep claude required missing - - "already installed if you are reading this; check your PATH" \
     "line 3 can show a 0% row it should have left out"
+fi
+
+# curl, the one optional entry. A missing curl costs the per-model weekly
+# window and nothing else: no cache is written, the segment is omitted the
+# same way it is for an account that has no such window, and every other row
+# renders exactly as before. So it must never fail the run, which is what
+# the optional tier is for.
+if have curl; then
+  add_dep curl optional ok "$(ver_of curl)" "$(command -v curl)" - -
+else
+  add_dep curl optional missing - - "$(remedy_curl)" \
+    "the per-model weekly window (the experimental fable segment) never appears"
 fi
 
 # flock and timeout used to be reported here as optional tools whose
