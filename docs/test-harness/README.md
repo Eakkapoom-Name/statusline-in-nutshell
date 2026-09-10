@@ -5,8 +5,9 @@ needs. Every suite builds its own fake `HOME` and stubs `ccusage` and
 `claude` on `PATH`, so nothing here reads or writes the real
 `~/.claude`, and nothing has to be installed first.
 
-Written for the 0.3.4 release, whose cross-platform verification is still
-owed. See [handoff.md](../handoff.md) for what has been run and where.
+Written for the 0.3.4 release and extended for the unreleased 0.3.5 work,
+whose cross-platform verification is still owed. See
+[handoff.md](../handoff.md) for what has been run and where.
 
 ## Running everything
 
@@ -23,7 +24,7 @@ bash docs/test-harness/run-all.sh /path/to/statusline-in-nutshell
 
 Expect `every suite passed` on the last line, and an exit status of 0.
 Allow about four minutes: two of the suites deliberately wait out the 90
-second cap on `reset-all-time`.
+second cap on `reset-all-time`. 196 assertions as of 2026-09-10.
 
 Each suite also runs on its own, taking the checkout and a scratch `HOME`:
 
@@ -46,7 +47,8 @@ bash docs/test-harness/t_shim.sh "$PWD/skills/nutshell-setup/scripts/nutshell-li
 | `t_integ.sh` | 13 | The real scripts under a fake `HOME`: 10 concurrent cost refreshes producing exactly one `ccusage` scan, 10 concurrent auth probes producing one, a hung probe cut short, the sync hook registering correctly under contention, `reset-all-time` waiting for a live lock holder, the statusline rendering, and `uninstall --purge` leaving no `locks/` behind |
 | `t_upgrade.sh` | 3 | An install that predates 0.3.4, whose empty `sync.lock`, `cost_cache.lock` and `auth_cache.lock` were flock's fd targets, must not read as permanently locked. Uninstall removes both the old and the new names |
 | `t_kill.sh` | 6 | A `reset-all-time` killed at its limit must report failure rather than `done`, and must release its lock. The hung auth probe runs through the real `nut_spawn` shape: nohup, disown, no tty |
-| `t_modeassert.sh` | 33 | Both layouts byte for byte, every part toggle in simple, first-install versus upgrade defaults for `mode` and `cost`, a bad or missing key repaired, the `mode` verb including its toggle and its refusal while inactive, and the `status` row order |
+| `t_modeassert.sh` | 51 | Both layouts byte for byte, every part toggle in simple, first-install versus upgrade defaults for `mode` and `cost`, a bad or missing key repaired, the `mode` verb including its toggle and its refusal while inactive, the `status` row order, the per-model weekly window (live, expired, absent, and hidden with the session part), and the accent color including the max effort that stays orange under it |
+| `t_deps.sh` | 34 | `nutshell-doctor.sh` per OS, with `uname` stubbed so the macOS and Git Bash arms run on Linux, the `optional` tier for `curl`, and `nutshell-install-deps.sh`: plan versus apply, channel and version resolution, both sudo arms, CRLF from a native package manager, a dry run that touches nothing, a failing install, and the usage errors. Nothing here installs anything or reaches the network: every package manager is a stub that records its argv |
 | `t_mode.sh` | n/a | Not assertions. Dumps the simple row in fourteen states with its width in terminal cells, for eyeballing a layout change |
 
 ## The two passes

@@ -21,9 +21,9 @@ eq(){ [ "$2" = "$3" ] && ok "$1" || bad "$1" "got [$2] want [$3]"; }
 
 cfg true true true false simple
 eq "simple emits exactly one line" "$(run | wc -l)" "1"
-eq "simple, words, exact string" "$(run)" "Opus 5 (high) | adv Opus 5 | ctx 51.8k/200.0k | 3.46\$ | 5h 42% (4h56m) | 7d 67% (4d1h) | statusline-in-nutshell@main"
+eq "simple, words, exact string" "$(run)" "Opus 5 (high) | adv: Opus 5 | ctx: 51.8k/200.0k | 5h: 42% (4h56m) | 7d: 67% (4d1h) | statusline-in-nutshell@main"
 cfg true true true true simple
-eq "simple, emoji, exact string" "$(run)" "💡 Opus 5 (high) | 🎓 Opus 5 | ⏳ 51.8k/200.0k | 🪙 3.46\$ | 🕐 42% (4h56m) | 🔄 67% (4d1h) | 📂 statusline-in-nutshell 🌿 main"
+eq "simple, emoji, exact string" "$(run)" "💡 Opus 5 (high) | 🎓 Opus 5 | ⏳ 51.8k/200.0k | 🕐 42% (4h56m) | 🔄 67% (4d1h) | 🌐 statusline-in-nutshell@main"
 cfg true true true false detail
 eq "detail still emits four lines" "$(run | wc -l)" "4"
 
@@ -38,6 +38,8 @@ nopay=$(printf '%s' "$P" | sed 's/,"rate_limits":{.*}}$/}/')
 case "$(run "$nopay")" in *"5h "*|*"7d "*) bad "metered" "rate windows rendered" ;; *) ok "metered session drops both windows" ;; esac
 printf '{"sessions":{"s1":{"subscription_type":"max","updated_at":%s,"sig":1}}}\n' "$now" > "$ST/auth_cache.json"
 
+cfg true true true false simple
+case "$(run)" in *'3.46$'*) bad "cost in simple" "spend rendered in the one-line layout" ;; *) ok "simple carries no spend even with the cost part on" ;; esac
 cfg false true true false simple
 case "$(run)" in *'3.46$'*) bad "cost off" "cost still shown" ;; *) ok "cost off drops the cost" ;; esac
 cfg true false true false simple
@@ -62,7 +64,8 @@ eq "mode simple writes it"  "$(T mode simple)" "mode: simple"
 eq "bare mode toggles back" "$(T mode)" "mode: detail"
 eq "bare mode toggles again" "$(T mode)" "mode: simple"
 T mode sideways >/dev/null 2>&1; eq "a bad argument exits 1" "$?" "1"
-eq "status row order" "$(T status | sed -n '4p;6p;8p' | tr -d '│' | tr -s ' ' | sed 's/^ //;s/ *$//' | tr '\n' ',')" "statusline active,mode simple,cost on,"
+eq "status row order" "$(T status | sed -n '4p;6p;8p;10p' | tr -d '│' | tr -s ' ' | sed 's/^ //;s/ *$//' | tr '\n' ',')" "statusline active,mode simple,session on,cost on,"
+case "$(T status)" in *color*) bad "status color row" "the accent color is in the table" ;; *) ok "status never reports the accent color" ;; esac
 T off >/dev/null 2>&1
 T mode detail >/dev/null 2>&1; eq "mode is refused while inactive" "$?" "1"
 out=$(T mode detail 2>&1); case "$out" in *inactive*) ok "the refusal names the inactive statusline" ;; *) bad "inactive message" "$out" ;; esac
@@ -94,8 +97,10 @@ case "$(f2run)" in *'0.77$'*) bad "first install cost" "cost rendered" ;; *) ok 
 HOME="$F2" bash "$F2/.claude/nutshell/bin/statusline-toggle.sh" status >/dev/null
 eq "the config it writes says cost false" "$(jq -r .cost "$F2/.claude/nutshell/config.json")" "false"
 HOME="$F2" bash "$F2/.claude/nutshell/bin/statusline-toggle.sh" cost on >/dev/null
-case "$(f2run)" in *'0.77$'*) ok "showing it once brings the cost back" ;; *) bad "cost on" "still hidden" ;; esac
-printf '{"model":true,"session":true,"workspace":true,"emoji":false,"disabled":false,"mode":"simple"}\n' > "$F2/.claude/nutshell/config.json"
+case "$(f2run)" in *'0.77$'*) bad "cost on in simple" "spend rendered in simple" ;; *) ok "showing the cost changes nothing in simple" ;; esac
+HOME="$F2" bash "$F2/.claude/nutshell/bin/statusline-toggle.sh" mode detail >/dev/null
+case "$(f2run)" in *'0.77$'*) ok "showing it once brings the cost back in detail" ;; *) bad "cost on" "still hidden" ;; esac
+printf '{"model":true,"session":true,"workspace":true,"emoji":false,"disabled":false}\n' > "$F2/.claude/nutshell/config.json"
 case "$(f2run)" in *'0.77$'*) ok "an upgrade with no cost key still shows it" ;; *) bad "upgrade cost" "hidden on an upgrade" ;; esac
 
 # parts stay usable in simple mode through the show/hide verbs
@@ -103,8 +108,51 @@ cfg true true true false simple
 bash "$BIN/statusline-toggle.sh" cost off >/dev/null 2>&1
 case "$(run)" in *'3.46$'*) bad "cost off via verb" "cost still shown" ;; *) ok "cost off through the toggle verb drops it in simple" ;; esac
 bash "$BIN/statusline-toggle.sh" cost on >/dev/null 2>&1
-case "$(run)" in *'3.46$'*) ok "cost on through the toggle verb brings it back" ;; *) bad "cost on via verb" "still hidden" ;; esac
+case "$(run)" in *'3.46$'*) bad "cost on via verb" "spend rendered in simple" ;; *) ok "cost on through the toggle verb still draws no spend in simple" ;; esac
+cfg true true true false detail
+case "$(run)" in *'3.46$'*) ok "the same cost key draws the spend in detail" ;; *) bad "cost on in detail" "still hidden" ;; esac
+cfg true true true false simple
 bash "$BIN/statusline-toggle.sh" all off >/dev/null 2>&1
 eq "all off still renders one line in simple" "$(run | wc -l)" "1"
 bash "$BIN/statusline-toggle.sh" all on >/dev/null 2>&1
+
+# the per-model weekly window (experimental). It comes from usage_cache.json,
+# never from the payload, and it is omitted rather than zeroed.
+cfg true true true false simple
+case "$(run)" in *fable*) bad "fable without a cache" "the row rendered with no usage cache" ;; *) ok "no usage cache means no per-model row" ;; esac
+printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$week" > "$ST/usage_cache.json"
+case "$(run)" in *"fable: 61%"*) ok "a live per-model window renders" ;; *) bad "fable live" "$(run)" ;; esac
+printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$((now - 60))" > "$ST/usage_cache.json"
+case "$(run)" in *fable*) bad "fable expired" "an expired window still rendered" ;; *) ok "an expired per-model window is dropped" ;; esac
+printf '{"updated_at":%s,"models":{}}\n' "$now" > "$ST/usage_cache.json"
+case "$(run)" in *fable*) bad "fable absent" "an account with no such window rendered one" ;; *) ok "an account with no per-model window renders nothing, not 0%" ;; esac
+cfg true false true false simple
+printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$week" > "$ST/usage_cache.json"
+case "$(run)" in *fable*) bad "fable with session off" "the row survived hiding the session part" ;; *) ok "hiding the session part hides the per-model row too" ;; esac
+rm -f "$ST/usage_cache.json"
+
+# the accent color (experimental). Read raw, since the whole assertion is
+# about the escape sequences.
+raw() { printf '%s' "$P" | bash "$BIN/statusline.sh" 2>&1; }
+ORANGE_SEQ=$(printf '38;2;217;119;87')
+BLUE_SEQ=$(printf '38;2;138;180;248')
+printf '{"model":true,"cost":true,"session":true,"workspace":true,"emoji":false,"mode":"simple","color":"orange","disabled":false}\n' > "$HOME/.claude/nutshell/config.json"
+case "$(raw)" in *"$ORANGE_SEQ"*) ok "orange draws the values in the brand color" ;; *) bad "orange" "no orange escape in the row" ;; esac
+printf '{"model":true,"cost":true,"session":true,"workspace":true,"emoji":false,"mode":"simple","color":"blue","disabled":false}\n' > "$HOME/.claude/nutshell/config.json"
+case "$(raw)" in *"$BLUE_SEQ"*) ok "blue draws the values in the blue accent" ;; *) bad "blue" "no blue escape in the row" ;; esac
+printf '{"model":true,"cost":true,"session":true,"workspace":true,"emoji":false,"mode":"simple","color":"sideways","disabled":false}\n' > "$HOME/.claude/nutshell/config.json"
+case "$(raw)" in *"$ORANGE_SEQ"*) ok "a bad color value renders orange" ;; *) bad "bad color" "neither accent rendered" ;; esac
+# max effort keeps the brand orange under the blue accent, so the effort
+# scale stays readable whatever the row is drawn in.
+maxp=$(printf '%s' "$P" | sed 's/"level":"high"/"level":"max"/')
+printf '{"model":true,"cost":true,"session":true,"workspace":true,"emoji":false,"mode":"simple","color":"blue","disabled":false}\n' > "$HOME/.claude/nutshell/config.json"
+maxout=$(printf '%s' "$maxp" | bash "$BIN/statusline.sh" 2>&1)
+case "$maxout" in *"${ORANGE_SEQ}mmax"*) ok "max effort keeps its orange under the blue accent" ;; *) bad "max effort color" "$(printf '%s' "$maxout" | cat -v | head -1)" ;; esac
+T color orange >/dev/null 2>&1
+eq "the color verb writes the key" "$(jq -r .color "$HOME/.claude/nutshell/config.json")" "orange"
+eq "the color verb prints nothing" "$(T color blue)" ""
+eq "bare color toggles" "$(jq -r .color "$HOME/.claude/nutshell/config.json")" "blue"
+T color sideways >/dev/null 2>&1; eq "a bad color argument exits 1" "$?" "1"
+eq "and leaves the saved color alone" "$(jq -r .color "$HOME/.claude/nutshell/config.json")" "blue"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]
