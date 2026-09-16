@@ -25,7 +25,8 @@
 # missing or too old. Optional gaps never fail the run, because the status
 # line works without them; they only cost the features named in the report.
 # One entry is optional as of 0.3.5: curl, which buys the per-model weekly
-# window and nothing else.
+# window and, since 0.3.6, the background refresh that keeps the 5-hour and
+# weekly percentages current while no session is getting replies.
 
 # Locale pin, for the same reason nutshell-lib.sh pins it: a comma-decimal
 # locale changes how numbers print and compare.
@@ -395,9 +396,10 @@ else
 fi
 
 # curl, the one optional entry. A missing curl costs the per-model weekly
-# window and nothing else: no cache is written, the segment is omitted the
-# same way it is for an account that has no such window, and every other row
-# renders exactly as before. So it must never fail the run, which is what
+# window and the background refresh of the two account windows: no cache is
+# written, the segment is omitted the same way it is for an account that has
+# no such window, and every other row renders exactly as before, the rate
+# percentages just wait for a reply to move. So it must never fail the run, which is what
 # the optional tier is for.
 if have curl; then
   add_dep curl optional ok "$(ver_of curl)" "$(command -v curl)" - -

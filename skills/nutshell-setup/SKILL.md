@@ -70,8 +70,8 @@ installed on any platform.
 Missing does not mean the same thing for all five. `jq` and `bash` are
 stop conditions, nothing works without them. `ccusage` and `claude` leave
 the install worth finishing, with rows that stay permanently empty or
-wrong until they are there. `curl` costs one experimental segment and
-nothing else.
+wrong until they are there. `curl` costs one experimental segment, and
+leaves the rate percentages waiting for a reply before they refresh.
 
 Add `--probe` when `ccusage` is already installed and you want to confirm
 the cost windows will actually fill. It runs a real one-day `ccusage daily
@@ -163,7 +163,8 @@ and report what stays off, using the doctor's `<cost if absent>` column:
 - no `claude` on `PATH`: the rate row can show a 0% window it should have
   left out.
 - no `curl`: the per-model weekly window (the experimental `fable` segment)
-  never appears. Nothing else changes.
+  never appears, and the 5-hour and weekly percentages refresh only when a
+  session gets a reply, rather than on their own every few minutes.
 
 ### 3. Run the same script the hook runs
 

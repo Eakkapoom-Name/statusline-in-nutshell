@@ -497,6 +497,14 @@ obj($usageraw) as $us |
 (($fab.resets_at | numbers) // 0) as $fab_reset |
 (($fab | length) > 0 and $fab_reset > $now) as $fab_live |
 ($us.updated_at // 0) as $u_upd |
+# The account-level five_hour and seven_day from the same cache. These are
+# the ONLY session-independent reading of those two windows: Claude Code
+# refreshes the payload rate_limits from the API responses of that session
+# and from nothing else, so in a tab that is sitting idle both the payload
+# and the shared rate cache are frozen at whatever was last published. The
+# endpoint is what corrects the row with no message sent.
+(($us.windows? | objects) // {}) as $uw |
+(($us.windows_at | numbers) // 0) as $u_wat |
 
 # Token counts formatted here in exact integer arithmetic, so the common
 # render needs no awk fork at all. Rounding one decimal place from a
@@ -552,6 +560,9 @@ fmt_tok($ctxtt) as $total_fmt |
 # A metered session takes no part in the shared cache, neither reading nor
 # writing; nor does one whose session line is hidden.
 (if ($plan == "none") or ($showrate | not) then {} else $rc end) as $c |
+# The endpoint windows carry the same gate for the same reason: they are the
+# numbers of the subscription account, and a metered tab must render none.
+(if ($plan == "none") or ($showrate | not) then {} else $uw end) as $uwg |
 ((($pl.cost.total_cost_usd | numbers) // 0) > 0) as $responded |
 ($cost | tostring) as $costs |
 
@@ -573,14 +584,25 @@ clean($p.five_hour) as $pf | clean($p.seven_day) as $ps |
 ($sid != "" and $sig != "") as $carries |
 ($carries and $sn != null and $tn != null and $sn > $tn) as $fresh |
 ($carries and ($fresh | not) and $sig != $stored) as $record |
-# A fresh session renders and publishes its own reading, falling back to
-# the cache for a window its payload lacks or has expired; an idle one
-# renders the cache, falling back to its own reading likewise.
 def live($v): if $v != null and $v.resets_at > $now then $v else null end;
-def pick($w; $pw):
-  if $fresh then (live($pw) // live(clean($c[$w])))
-  else (live(clean($c[$w])) // live($pw)) end;
-pick("five_hour"; $pf) as $f | pick("seven_day"; $ps) as $s |
+live(clean($uwg["five_hour"])) as $uf |
+live(clean($uwg["seven_day"])) as $usv |
+# `windows_at`, never `updated_at`: the latter is stamped by a FAILED probe
+# too, so weighing it here would let an endpoint that is down outrank a
+# reading another session published since. An endpoint newer than the cache
+# outranks it; the cache still outranks the frozen payload of an idle tab.
+(($c.measured_at | numbers) // 0) as $c_meas |
+($u_wat > $c_meas) as $endpoint_fresher |
+($endpoint_fresher and ($uf != null or $usv != null)) as $endpoint_used |
+# A fresh session renders and publishes its own reading, falling back to the
+# cache and then the endpoint for a window its payload lacks or has expired;
+# an idle one renders whichever of the endpoint and the cache was measured
+# later, falling back likewise.
+def pick($w; $pw; $uv):
+  if $fresh then (live($pw) // live(clean($c[$w])) // $uv)
+  elif $endpoint_fresher then ($uv // live(clean($c[$w])) // live($pw))
+  else (live(clean($c[$w])) // live($pw) // $uv) end;
+pick("five_hour"; $pf; $uf) as $f | pick("seven_day"; $ps; $usv) as $s |
 # Windows seen on this plan: what the cache remembers, if it was recorded
 # under the same plan, plus whatever is live right now.
 (($c.seen | objects) // {}) as $seen |
@@ -612,6 +634,7 @@ def show($w; $v):
 ( (if $f == null then {} else {five_hour: $f} end)
   + (if $s == null then {} else {seven_day: $s} end)
   + (if $fresh then {measured_at: $now}
+     elif $endpoint_used then {measured_at: $u_wat}
      elif ($c.measured_at | type) == "number" then {measured_at: $c.measured_at}
      else {} end)
   + (if ($windows | length) == 0 then {} else {seen: {plan: $plan, windows: $windows}} end)

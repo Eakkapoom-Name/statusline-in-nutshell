@@ -115,10 +115,13 @@ which one is missing.
   Claude Code itself installs this, so a gap here is a `PATH` problem rather
   than a missing program.
 - **`curl`**, optional\
-  Fetches the per-model weekly window (the `fable` segment) from your own
-  account usage endpoint, the same one `/usage` reads. Without it that one
-  segment never appears and nothing else changes. It is the only outbound
-  network call anything here makes, and a metered session never makes it.
+  Fetches your account usage endpoint, the same one `/usage` reads. It
+  supplies the per-model weekly window (the `fable` segment), and it is what
+  lets the 5-hour and weekly percentages correct themselves while you are
+  not typing. Without it that one segment never appears and the two
+  percentages stay at their last reading until some session gets a reply. It
+  is the only outbound network call anything here makes, and a metered
+  session never makes it.
 
 `flock` and `timeout` were listed here through 0.3.3 and you no longer need
 either. The plugin serialises its own background refreshes with a lock file

@@ -15,6 +15,19 @@
 # kind == "weekly_scoped" and scope.model.display_name (e.g. "Fable"),
 # with percent and an ISO 8601 resets_at.
 #
+# The same array also carries the ACCOUNT-level windows the stdin payload
+# has, kind == "session" (the five-hour one) and kind == "weekly_all". Those
+# are cached too, and they are the only session-independent reading of them
+# that exists: Claude Code refreshes the payload's rate_limits solely from
+# that session's own API responses, so every window in an idle tab is frozen,
+# in the shared rate cache as much as in the payload. This is what lets the
+# rate row correct itself while nobody is typing. The top-level five_hour and
+# seven_day objects of the same response say the same thing with a
+# `utilization` float; limits[] is read instead so all three windows come out
+# of one pass, and those two are the fallback if a kind is ever renamed.
+# `is_active` is NOT consulted: the weekly window reports false while it sits
+# at 0%, which is still a real reading.
+#
 # This is the ONLY outbound network call anything in this plugin makes, and
 # the endpoint is undocumented and versioned with the Claude Code binary, so
 # every failure here is silent and leaves the previous cache untouched: no
@@ -29,9 +42,21 @@
 # keeps its credentials in the Keychain has no such file, so this exits
 # without probing and the row simply never appears.
 #
-# Cache shape: {"updated_at": <epoch>, "models": {"<display_name>": {percent, resets_at}}}
-# where resets_at is a unix epoch, converted here so the render path never
-# has to parse a timestamp.
+# Cache shape:
+#   {"updated_at": <epoch>, "windows_at": <epoch>,
+#    "models":  {"<display_name>": {percent, resets_at}},
+#    "windows": {"five_hour": {used_percentage, resets_at}, "seven_day": {...}}}
+# where every resets_at is a unix epoch, converted here so the render path
+# never has to parse a timestamp. `windows` uses the payload's own
+# used_percentage key so statusline.sh can feed it through the same helpers
+# as a payload window.
+#
+# The two stamps are not interchangeable. `updated_at` is the 300s throttle
+# and moves on EVERY attempt, successful or not, so an endpoint that is down
+# is not called once a second. `windows_at` moves only when a response
+# actually parsed, and is what statusline.sh weighs against the shared rate
+# cache: a failed probe must never let last hour's windows outrank a reading
+# some other session published a minute ago.
 
 case "${BASH_SOURCE[0]}" in */*) NUT_LIB_DIR="${BASH_SOURCE[0]%/*}" ;; *) NUT_LIB_DIR=. ;; esac
 . "$NUT_LIB_DIR/nutshell-lib.sh" 2>/dev/null || exit 0
@@ -87,35 +112,55 @@ rm -f "$hdr" 2>/dev/null
 # anything carrying a different offset is skipped rather than guessed at.
 new=""
 [ -n "$body" ] && new=$(printf '%s' "$body" | jq -c --argjson now "$now" '
+  def epoch: (strings // "")
+             | sub("\\.[0-9]+"; "")
+             | sub("\\+00:00$"; "Z")
+             | (try fromdateiso8601 catch null);
   select(type == "object") | select(has("error") | not)
-  | [ ((.limits? | arrays) // [])[]
+  | ((.limits? | arrays) // []) as $lim
+  | [ $lim[]
       | select(.kind? == "weekly_scoped")
       | { name:    (.scope?.model?.display_name? | strings),
           percent: ((.percent | numbers) // 0),
-          resets_at: ((.resets_at | strings // "")
-                      | sub("\\.[0-9]+"; "")
-                      | sub("\\+00:00$"; "Z")
-                      | (try fromdateiso8601 catch null)) }
-      | select(.name != null and .resets_at != null) ]
+          resets_at: (.resets_at | epoch) }
+      | select(.name != null and .resets_at != null) ] as $scoped
+  | [ $lim[]
+      | select(.kind? == "session" or .kind? == "weekly_all")
+      | { name: (if .kind == "session" then "five_hour" else "seven_day" end),
+          used_percentage: ((.percent | numbers) // 0),
+          resets_at: (.resets_at | epoch) }
+      | select(.resets_at != null) ] as $acct
   | { updated_at: $now,
-      models: (map({ (.name): {percent: .percent, resets_at: .resets_at} })
-               | add // {}) }' 2>/dev/null)
+      windows_at: $now,
+      models: ($scoped
+               | map({ (.name): {percent: .percent, resets_at: .resets_at} })
+               | add // {}),
+      windows: ($acct
+                | map({ (.name): {used_percentage: .used_percentage,
+                                  resets_at: .resets_at} })
+                | add // {}) }' 2>/dev/null)
 
-# A failed call still stamps the cache, keeping whatever windows were last
-# seen. Without that the timestamp would stay old, statusline.sh's 300s gate
-# would fire on the very next render, and an endpoint that is down would be
-# called once a second forever. The old windows are kept rather than cleared
-# because a transient failure says nothing about them, and an expired one is
-# dropped at render time anyway.
+# A failed call moves updated_at and nothing else, carrying both `models` and
+# `windows` forward untouched and leaving `windows_at` where it was. Without
+# the updated_at move the 300s gate would fire on the very next render and an
+# endpoint that is down would be called once a second forever; without the
+# windows_at freeze statusline.sh would read those carried-forward windows as
+# newly measured and let them outrank the shared rate cache. Both maps are
+# kept rather than cleared because a transient failure says nothing about
+# them, and an expired window is dropped at render time anyway.
 #
-# An empty models map from a SUCCESSFUL call is written as-is: that is a real
-# answer (this account has no per-model window), not a failure.
+# An empty `models` or `windows` map from a SUCCESSFUL call is written as-is:
+# that is a real answer (this account has no per-model window, or the
+# endpoint stopped reporting one of these kinds), not a failure.
 if [ -z "$new" ]; then
   new=$(jq -c --argjson now "$now" \
-    '{updated_at: $now, models: ((.models? | objects) // {})}' \
+    '{updated_at: $now,
+      windows_at: ((.windows_at | numbers) // 0),
+      models:  ((.models? | objects) // {}),
+      windows: ((.windows? | objects) // {})}' \
     "$NUT_USAGE_CACHE" 2>/dev/null) \
     || new=""
-  [ -n "$new" ] || new="{\"updated_at\":$now,\"models\":{}}"
+  [ -n "$new" ] || new="{\"updated_at\":$now,\"windows_at\":0,\"models\":{},\"windows\":{}}"
 fi
 
 nut_write_json_object "$new" "$NUT_USAGE_CACHE"
