@@ -177,6 +177,17 @@ where it makes the render cheaper:
    refresher instead: one `find -mmin +10 -delete` per refresh, off the
    render path, never by the render itself. Covered in `t_integ.sh`.
 
+Measured again on 2026-09-21, after all four: 236ms per render over 20
+renders, against 83ms for a bare `bash -c 'exit 0'` on the same box in the
+same minute. The render is therefore still what it was in Finding 2 - a
+handful of process creations and nothing else - and the box itself is now
+about twice as slow at creating one as it was on Sep 18 (83ms against 42),
+which makes the case for the interval stronger rather than weaker. What
+changed is how often that 236ms is paid: at `refreshInterval: 1` an idle
+session spends ~24% of a core on it, and at 5 it spends ~5%. Across the six
+sessions that were open during the original measurement, that is the
+difference between ~140% of a core and ~28%.
+
 Machine configuration, still the user's to make:
 
 5. Add Defender exclusions (needs admin) for

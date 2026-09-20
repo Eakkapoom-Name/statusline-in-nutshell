@@ -135,7 +135,46 @@ Then the 0.3.5 surfaces, none of which has ever run on a Mac:
 
 ### Windows, Git for Windows bash
 
-Never run. Three specific risks, each with a reason to doubt it:
+**Partly run, 2026-09-21** on Windows 11 Home (26200), Git for Windows bash
+5.3.15, native jq 1.8.2 from WinGet, Claude Code 2.1.278. What follows is
+only what was actually executed on that box; everything not listed here is
+still unrun, and the risk list below it stands unchanged for those.
+
+- **The whole harness.** `run-all.sh`: **241 assertions across eleven suite
+  runs, 0 failures**, both halves of every `x2` suite included. It takes
+  about 25 minutes here, most of it building the PATH mirror.
+  Getting there took three harness fixes of its own, none of them about the
+  scripts under test: the PATH mirror removed a binary by its bare name and
+  so never removed `jq.exe`, `curl.exe`, `flock.exe` or `timeout.exe`; the
+  20-way lock test assumed 20 processes could be launched inside a one
+  second hold, which needs a fork to be about a millisecond; and two
+  exact-string rows set their reset stamps exactly on a display boundary,
+  so the value they asserted was true for one second. Before those fixes
+  this box reported 26 failures, every one of them fiction.
+- **The real `timeout.exe`.** With `C:\Windows\System32` first on PATH,
+  `nut_have_gnu_timeout` rejects cmd's `timeout.exe`, `nut_timeout 15
+  printf hello` returns `hello` immediately rather than after 15s, and
+  `nut_timeout 2 sleep 20` is killed at 3s with rc 143. This was the first
+  of the three risks below and it holds.
+- **The doctor's OS arm, for real.** Not a stub `uname`: it reports
+  `os windows Windows (Git Bash)`, finds `winget` and `npm`, and every
+  dependency row resolves to a real path, including jq under the WinGet
+  package directory.
+- **The usage probe end to end.** `state/usage_cache.json` exists and the
+  per-model weekly segment renders with a converted reset date, which is
+  `curl -K <posix path>` surviving MSYS path rewriting and
+  `fromdateiso8601` working in the native jq - two of the 0.3.5 risks
+  below. No `usage_hdr.*` file was left in `state/`.
+- **`cfg_mode` and CRLF**, indirectly: both layouts render and every toggle
+  verb behaves, across 57 assertions in the mode suite. A stray `\r` on
+  that field would have forced detail and failed them.
+
+Still unrun here, and not to be marked off on the strength of the above:
+the package managers for real (`scoop`, `winget`, `choco`, and whether
+winget raises a UAC prompt), PATH visibility after an install, and SIGTERM
+to a native `.exe` with grandchildren.
+
+Three specific risks, each with a reason to doubt it:
 
 - **`timeout.exe`**: `C:\Windows\System32\timeout.exe` is on the Git Bash
   `PATH` and is cmd's "wait N seconds", not coreutils. `nut_have_gnu_timeout`
