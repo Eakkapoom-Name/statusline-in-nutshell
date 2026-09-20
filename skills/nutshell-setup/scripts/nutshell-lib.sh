@@ -142,6 +142,13 @@ nut_mtime() {
 # from a process that died with this pid is truncated rather than
 # respected, which is right: nothing is reading it.
 #
+# One caveat for a future caller: a subshell inherits its parent's $$, so
+# two concurrent subshells of the SAME script must not write the same
+# target. Nothing here does - every concurrent writer in the plugin is a
+# separate process, spawned by nut_spawn or started by Claude Code - and
+# $BASHPID, which would tell them apart, is bash 4 while the floor here is
+# the 3.2 that stock macOS ships.
+#
 # The fork this saves is the expensive kind on Windows, where process
 # creation is ~40ms against ~1ms on Linux and macOS, and one of these
 # writes sits on the render path (the rate cache). Dropping it is free
