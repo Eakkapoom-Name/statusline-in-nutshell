@@ -107,7 +107,21 @@ rm -f "$ST/rate_cache.json.now"
 n=$(ls "$ST" | grep -c 'sweeptest\.json\.' || true)
 [ "$n" = "0" ] && [ -f "$ST/sweeptest.json" ] && ok "an atomic write leaves no temporary behind" \
   || bad "atomic write" "$n leftovers"
-rm -f "$ST/sweeptest.json"
+# And it is still private to the user. The mktemp this write used to draw
+# from created at 0600 and the rename carried that to the target; the umask
+# in nutshell-lib.sh is what keeps that true now that the temp file is a
+# plain redirection. Skipped where the filesystem does not honour a umask
+# at all, which is every MSYS path on Windows: it reports 0644 for
+# everything and the real permissions are ACLs.
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
+( umask 077; : > "$ST/.modeprobe" )
+if [ "$(mode_of "$ST/.modeprobe")" = "600" ]; then
+  m=$(mode_of "$ST/sweeptest.json")
+  [ "$m" = "600" ] && ok "an atomic write leaves the target 0600" || bad "write mode" "got $m"
+else
+  ok "file modes are not enforced here, nothing to assert about 0600"
+fi
+rm -f "$ST/.modeprobe" "$ST/sweeptest.json"
 
 # H. uninstall --purge leaves no locks directory
 bash "$BIN/statusline-toggle.sh" uninstall --yes --purge >/dev/null 2>&1

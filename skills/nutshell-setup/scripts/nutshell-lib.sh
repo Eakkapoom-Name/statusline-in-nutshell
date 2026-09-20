@@ -20,6 +20,21 @@
 LC_ALL=C
 export LC_ALL
 
+# File mode pin, and it is load-bearing rather than tidy. Every atomic write
+# in this file used to draw its temp file from `mktemp`, which creates at
+# 0600, and a rename carries that mode to the target: settings.json, the
+# caches and the config all ended up private to the user without anyone
+# saying so. The temp file is now a plain redirection, which would create at
+# 0666 & ~umask - 0644 on a default Linux or macOS box - and settings.json
+# can carry an `env` block with an ANTHROPIC_API_KEY in it. So the umask
+# says what the mktemp used to say, for every file and directory any of
+# these scripts create.
+#
+# A builtin, so it costs nothing on the render path, which is the whole
+# reason the mktemp could go. Windows is unaffected either way: the MSYS
+# layer reports 0644 for everything and the real permissions are ACLs.
+umask 077
+
 # ---------------------------------------------------------------------------
 # Paths. Everything this plugin owns lives under ~/.claude/nutshell/ (since
 # 0.3.1). Only settings.json and .credentials.json are read from ~/.claude
