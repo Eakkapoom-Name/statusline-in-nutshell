@@ -21,6 +21,12 @@ eq(){ [ "$2" = "$3" ] && ok "$1" || bad "$1" "got [$2] want [$3]"; }
 # A PATH with every dependency and every package manager removed, so each
 # case can put back exactly the ones it is about. Symlinks, not functions:
 # the scripts decide with `command -v`.
+#
+# The name is matched with any Windows executable suffix removed. Without
+# that, `jq.exe` does not match `jq`, the real binary stays on the mirrored
+# PATH, and every "X is missing" case on this harness silently tests a box
+# where X is present: 13 of these assertions failed that way on Git for
+# Windows, none of them for a reason in the scripts under test.
 MIRROR="$W/mirror"; mkdir -p "$MIRROR"
 IFS=: read -r -a _dirs <<< "$PATH"
 for d in "${_dirs[@]}"; do
@@ -28,7 +34,8 @@ for d in "${_dirs[@]}"; do
   for f in "$d"/*; do
     [ -x "$f" ] && [ ! -d "$f" ] || continue
     b=${f##*/}
-    case "$b" in jq|ccusage|claude|curl|brew|npm|bun|pnpm|nix|winget|scoop|choco|sudo|uname|sw_vers) continue ;; esac
+    case "$b" in *.exe|*.EXE|*.cmd|*.CMD|*.bat|*.BAT|*.com|*.COM|*.ps1|*.PS1) n=${b%.*} ;; *) n=$b ;; esac
+    case "$n" in jq|ccusage|claude|curl|brew|npm|bun|pnpm|nix|winget|scoop|choco|sudo|uname|sw_vers) continue ;; esac
     [ -e "$MIRROR/$b" ] || ln -s "$f" "$MIRROR/$b" 2>/dev/null
   done
 done
@@ -117,6 +124,12 @@ stub apt-get 'exit 0'
 stub apt-cache 'echo "  Candidate: 1.7.1-3"'
 stub sudo '[ "$1" = -n ] && [ "$2" = true ] && exit 1; exit 1'
 mkdir -p "$W/osr"; printf 'ID=ubuntu\nVERSION_ID="24.04"\nID_LIKE=debian\n' > "$W/osr/os-release"
+# The doctor reads this instead of /etc/os-release, which is what makes the
+# Ubuntu arm below an assertion rather than a question about the machine
+# running the suite. Without it these two cases passed only on a Debian
+# derivative and failed on macOS and on Windows, where there is no
+# /etc/os-release to find and the remedy fell back to generic prose.
+export NUT_OS_RELEASE="$W/osr/os-release"
 plan=$(P bash "$INS" --plan --porcelain 2>/dev/null)
 eq "a sudo fix nobody can answer is skipped" "$(printf '%s\n' "$plan" | field plan jq 3)" "skip"
 case "$(printf '%s\n' "$plan" | field plan jq 6)" in

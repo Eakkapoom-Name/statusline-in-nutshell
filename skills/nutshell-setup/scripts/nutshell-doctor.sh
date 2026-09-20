@@ -118,11 +118,19 @@ case "$(uname -s 2>/dev/null)" in
     # /etc/os-release is the only cross-distro answer; ID_LIKE is what makes
     # a derivative (Mint, Pop!_OS, Zorin) resolve to its apt/dnf parent
     # instead of falling through to "unknown".
-    if [ -r /etc/os-release ]; then
+    #
+    # $NUT_OS_RELEASE names a different file when it is set, which is the
+    # test harness and nothing else: the suite has to be able to ask what
+    # this would say on Ubuntu while running on macOS or on Windows, where
+    # /etc/os-release does not exist and the distro arms could otherwise
+    # only be verified on a distro. Unset, which is every real run, the
+    # path is the one it always was.
+    osrel="${NUT_OS_RELEASE:-/etc/os-release}"
+    if [ -r "$osrel" ]; then
       # One subshell for all three values: sourcing it once per variable
       # read the same file three times to answer three questions.
       IFS="$us" read -r os_name os_version os_like <<EOF
-$(. /etc/os-release 2>/dev/null; printf '%s\037%s\037%s' "${ID:-Linux}" "${VERSION_ID:-}" "${ID_LIKE:-}")
+$(. "$osrel" 2>/dev/null; printf '%s\037%s\037%s' "${ID:-Linux}" "${VERSION_ID:-}" "${ID_LIKE:-}")
 EOF
       case " $os_name $os_like " in
         *" debian "*|*" ubuntu "*) os_family="debian" ;;
