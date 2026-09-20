@@ -155,4 +155,30 @@ eq "bare color toggles" "$(jq -r .color "$HOME/.claude/nutshell/config.json")" "
 T color sideways >/dev/null 2>&1; eq "a bad color argument exits 1" "$?" "1"
 eq "and leaves the saved color alone" "$(jq -r .color "$HOME/.claude/nutshell/config.json")" "blue"
 
+# A Windows current_dir. Claude Code hands the native path through on that
+# platform, and its separator is the backslash, so the rendered row carries
+# backslashes as DATA. Every one of them is an escape to printf's %b, and
+# the path above holds three of the worst: "\n" (newline), "\D" and "\U"
+# (which bash rejects outright). The row is built with %s for that reason;
+# these assertions are what keeps it that way. They run on every platform,
+# since the payload is the input and nothing here needs Windows to fail.
+# The path is assembled by jq rather than written into a JSON string, which
+# would need its backslashes doubled and would test the doubling instead.
+WINDIR='C:\Users\name8\Documents\statusline-in-nutshell'
+winp=$(jq -nc --arg d "$WINDIR" '{session_id:"s1",model:{display_name:"Opus 5"},
+  context_window:{used_percentage:37,total_input_tokens:51800,context_window_size:200000},
+  workspace:{current_dir:$d},cost:{total_cost_usd:3.4567}}')
+winrun() { printf '%s' "$winp" | bash "$BIN/statusline.sh" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
+winerr() { printf '%s' "$winp" | bash "$BIN/statusline.sh" 2>&1 >/dev/null; }
+cfg true true true false detail
+eq "a backslash path still renders four lines" "$(winrun | wc -l)" "4"
+case "$(winrun)" in *"$WINDIR"*) ok "the backslash path renders whole and unescaped" ;;
+  *) bad "backslash path" "$(winrun | tail -1)" ;; esac
+eq "a backslash path writes nothing to stderr" "$(winerr)" ""
+cfg true true true false simple
+eq "a backslash path still renders one line in simple" "$(winrun | wc -l)" "1"
+case "$(winrun)" in *"$WINDIR"*) ok "simple renders the backslash path whole" ;;
+  *) bad "backslash path, simple" "$(winrun)" ;; esac
+eq "a backslash path is silent in simple too" "$(winerr)" ""
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]
