@@ -5,7 +5,13 @@ BIN="$HOME/.claude/nutshell/bin"; ST="$HOME/.claude/nutshell/state"
 mkdir -p "$BIN" "$ST" "$HOME/.claude/nutshell/locks"
 for f in nutshell-lib.sh statusline.sh statusline-toggle.sh; do cp "$REPO/skills/nutshell-setup/scripts/$f" "$BIN/$f"; done
 printf '{"advisorModel":"opus"}\n' > "$HOME/.claude/settings.json"
-now=$(date +%s); five=$((now+17760)); week=$((now+349200))
+# Both stamps are set half a display unit past the value they assert, not
+# on it. now+17760 is 4h56m to the second, so the row read "4h56m" for one
+# second and "4h55m" ever after, and every exact-string assertion below
+# raced the clock: they passed on a fast box and failed on a slow one,
+# which on Windows is every run. +30s on the minute-granular window and
+# +30m on the hour-granular one buys half a unit of slack either way.
+now=$(date +%s); five=$((now+17760+30)); week=$((now+349200+1800))
 printf '{"updated_at":%s,"today_cost":12.34,"weekly_cost":56.78,"monthly_cost":123.45,"all_time_cost":2930.12}\n' "$now" > "$ST/cost_cache.json"
 printf '{"sessions":{"s1":{"subscription_type":"max","updated_at":%s,"sig":1}}}\n' "$now" > "$ST/auth_cache.json"
 printf '{"five_hour":{"used_percentage":42,"resets_at":%s},"seven_day":{"used_percentage":67,"resets_at":%s},"seen":{"plan":"max","windows":["five_hour","seven_day"]},"sessions":{"s1":{"sig":1,"at":%s}},"measured_at":%s}\n' "$five" "$week" "$now" "$now" > "$ST/rate_cache.json"

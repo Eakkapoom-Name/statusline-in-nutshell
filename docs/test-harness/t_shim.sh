@@ -45,16 +45,39 @@ if nut_lock_acquire "$L" 60; then bad "fresh" "fresh lock was stolen"; else ok "
 rm -f "$L.held"
 
 # 9 mutual exclusion under 20 concurrent processes
+#
+# Behind a start gate, which is not ceremony. The starters have to be
+# racing each other, and simply launching 20 of them in a loop only
+# achieves that where a process costs about a millisecond: under the Cygwin
+# bash Git for Windows ships it costs ~40ms, the loop took 1585ms, the
+# first holder released its lock 1206ms in, and a starter that had not even
+# been launched at that point took the freed lock quite correctly. The test
+# then read "2 entered" and called a working lock broken. So each starter
+# now announces itself and waits for the gate, and the race begins when all
+# 20 are at it.
 LOG="$HOME/conc.log"; : > "$LOG"
+READY="$HOME/conc.ready"; GATE="$HOME/conc.gate"
+rm -rf "$READY" "$GATE"; mkdir -p "$READY"
 i=0
 while [ "$i" -lt 20 ]; do
-  bash -c '. "$1"; nut_lock_acquire "$2" 60 || exit 0; printf "in\n" >> "$3"; sleep 1' _ "$LIB" "$L" "$LOG" &
+  bash -c '. "$1"; : > "$4/$$"
+    while [ ! -e "$5" ]; do sleep 0.05; done
+    nut_lock_acquire "$2" 60 || exit 0; printf "in\n" >> "$3"; sleep 1' \
+    _ "$LIB" "$L" "$LOG" "$READY" "$GATE" &
   i=$((i+1))
 done
+# Wait for all 20 to reach the gate, then open it. The cap is only so a
+# starter that died cannot hang the suite; the assertion below still holds
+# with fewer racers, it is just a weaker race.
+w=0
+while [ "$(ls "$READY" | wc -l | tr -d ' ')" -lt 20 ] && [ "$w" -lt 200 ]; do
+  sleep 0.1; w=$((w+1))
+done
+: > "$GATE"
 wait
 n=$(wc -l < "$LOG" | tr -d ' ')
 [ "$n" = "1" ] && ok "20 concurrent starters, exactly 1 entered" || bad "concurrency" "$n entered, want 1"
-rm -f "$L.held"
+rm -f "$L.held"; rm -rf "$READY" "$GATE"
 
 # 10 nut_lock_wait gets it once the holder goes away
 ( . "$LIB"; nut_lock_acquire "$L" 60; sleep 2 ) &
