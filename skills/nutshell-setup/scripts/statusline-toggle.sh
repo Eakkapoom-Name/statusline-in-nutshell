@@ -22,7 +22,8 @@
 # key must not silently switch the statusline to icons the user did not
 # ask for.
 #
-# Changes take effect within ~1s (statusline refreshInterval), no restart.
+# Changes take effect within one refreshInterval (~1s, ~5s on Windows), no
+# restart.
 
 set -euo pipefail
 

@@ -105,5 +105,23 @@ out=$(PATH="$HOME/badpath:$PATH" NUT_GNU_TIMEOUT= bash -c '. "$1"; nut_timeout 2
 e=$(date +%s)
 [ "$rc" -ne 0 ] && [ "$((e-s))" -lt 6 ] && ok "impostor timeout still gets the watcher kill at $((e-s))s" || bad "timeout gate kill" "rc=$rc took $((e-s))s"
 
+# 18 the registered refreshInterval follows the platform: 5s on the two
+# Windows bash builds, 1s everywhere else. The lib reads $OSTYPE rather
+# than forking uname, so setting it here is the whole platform switch.
+iv() { ( OSTYPE="$1"; . "$LIB"; printf '%s' "$NUT_REFRESH_INTERVAL" ); }
+reg() { ( OSTYPE="$1"; . "$LIB"; printf '%s' "$NUT_STATUSLINE_VALUE" ); }
+for o in msys cygwin; do
+  [ "$(iv "$o")" = "5" ] && ok "OSTYPE=$o registers the 5s interval" \
+    || bad "interval $o" "got $(iv "$o")"
+done
+for o in linux-gnu darwin24; do
+  [ "$(iv "$o")" = "1" ] && ok "OSTYPE=$o keeps the 1s interval" \
+    || bad "interval $o" "got $(iv "$o")"
+done
+case "$(reg msys)" in *'"refreshInterval":5}') ok "the registered value carries the interval" ;;
+  *) bad "registration" "$(reg msys)" ;; esac
+printf '%s' "$(reg linux-gnu)" | jq -e '.command | test("statusline.sh")' >/dev/null 2>&1 \
+  && ok "the registration is still valid JSON" || bad "registration" "not parseable"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

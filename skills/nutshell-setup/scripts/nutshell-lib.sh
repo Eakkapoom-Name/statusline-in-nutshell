@@ -63,8 +63,30 @@ NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh cost_cac
 # on a few events (session start, a new assistant message, /compact, a
 # permission-mode change) and otherwise not at all, so every segment read
 # from disk rather than from the stdin payload (advisor, cost, rate cache)
-# would sit stale while the session idles. A 1s timer re-runs it on a clock.
-NUT_STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/nutshell/bin/statusline.sh","refreshInterval":1}'
+# would sit stale while the session idles. The timer re-runs it on a clock.
+#
+# The interval is 1s everywhere except Windows, where it is 5s. That is not
+# a taste call, it is the arithmetic of the platform: a render is ~1ms of
+# process creation on Linux and macOS and ~150ms under the Cygwin bash Git
+# for Windows ships, because every fork in it costs ~40ms there. At 1Hz
+# that is a tenth of a core per open session doing nothing but restarting
+# processes, and the maintainer measured 69 distinct bash/jq/conhost pids
+# in five seconds across six sessions, sustained, with Defender scanning
+# each image. 5s divides all of that by five and costs at most five
+# seconds of lag on the three clock-driven fields, none of which can move
+# faster than their own caches anyway: cost and the usage windows sit
+# behind a 300s gate, and everything from the payload - model, context,
+# session cost - still repaints on the event, not on the timer.
+#
+# $OSTYPE, not `uname`: this file is sourced by the render, and a fork here
+# would be the very cost being avoided. Bash sets it at compile time, to
+# "msys" or "cygwin" for the Windows builds and never for a Linux or macOS
+# one, so those two platforms keep the 1s they have always had.
+case "$OSTYPE" in
+  msys*|cygwin*|win32*) NUT_REFRESH_INTERVAL=5 ;;
+  *)                    NUT_REFRESH_INTERVAL=1 ;;
+esac
+NUT_STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/nutshell/bin/statusline.sh","refreshInterval":'"$NUT_REFRESH_INTERVAL"'}'
 
 # ---------------------------------------------------------------------------
 # The pre-0.3.1 layout, when all of this sat loose in ~/.claude. Needed by
@@ -110,15 +132,35 @@ nut_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
+# The temp name every atomic write below uses: the target with the writing
+# process's own pid appended.
+#
+# It replaces a `mktemp "$target.XXXXXX"`, which cost a fork for a property
+# the pid already has. What the name must guarantee is that no two writers
+# running at once share it - stock macOS has no flock, so two refreshers
+# really can overlap - and no two live processes share a pid. A leftover
+# from a process that died with this pid is truncated rather than
+# respected, which is right: nothing is reading it.
+#
+# The fork this saves is the expensive kind on Windows, where process
+# creation is ~40ms against ~1ms on Linux and macOS, and one of these
+# writes sits on the render path (the rate cache). Dropping it is free
+# everywhere and worth roughly a quarter of a Windows render.
+#
+# Not for a file that holds a secret: a predictable name is a symlink
+# target a second local user could plant. The one such file, the usage
+# probe's auth header, keeps its mktemp.
+nut_tmp_for() {
+  NUT_TMP="${1}.$$"
+}
+
 # Write $1 (text, no trailing newline added) to file $2 atomically: a
-# same-directory mktemp, then a rename. Same directory, not the default
+# same-directory temp file, then a rename. Same directory, not the default
 # /tmp, so the mv is a same-filesystem rename a concurrent reader cannot
-# catch half-written; a unique temp name, not a fixed "$target.tmp", so two
-# writers running at once (stock macOS has no flock) cannot truncate each
-# other's file. Returns 1 with the temp file removed on any failure.
+# catch half-written. Returns 1 with the temp file removed on any failure.
 nut_write_atomic() {
   local content="$1" target="$2" tmp
-  tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
+  nut_tmp_for "$target"; tmp="$NUT_TMP"
   if printf '%s' "$content" > "$tmp" 2>/dev/null && mv "$tmp" "$target" 2>/dev/null; then
     return 0
   fi
@@ -130,12 +172,15 @@ nut_write_atomic() {
 # ledger or cache from being truncated, or replaced with garbage, when an
 # upstream jq step silently produced empty or malformed output: rejected
 # content leaves the existing file untouched and returns 0 (there was
-# nothing to write). Only a failed mktemp or rename returns 1, which is
+# nothing to write). Only a failed write or rename returns 1, which is
 # what `reset-all-time` reads as "the reset did not land".
 nut_write_json_object() {
   local content="$1" target="$2" tmp
-  tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
-  printf '%s' "$content" > "$tmp" 2>/dev/null
+  nut_tmp_for "$target"; tmp="$NUT_TMP"
+  # A temp file that cannot even be created is the old failed-mktemp case,
+  # and the caller has to hear about it: `reset-all-time` reads a 1 here as
+  # "the reset did not land".
+  printf '%s' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
   if [ -s "$tmp" ] && jq -e 'type == "object"' "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$target" 2>/dev/null
   else
@@ -151,12 +196,35 @@ nut_write_json_object() {
 nut_jq_edit() {
   local target="$1" tmp
   shift
-  tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
+  nut_tmp_for "$target"; tmp="$NUT_TMP"
   if jq "$@" "$target" > "$tmp" && mv "$tmp" "$target" 2>/dev/null; then
     return 0
   fi
   rm -f "$tmp" 2>/dev/null
   return 1
+}
+
+# Delete the write temporaries a killed process left behind in the state
+# directory: both the "<cache>.json.<pid>" this library writes now and the
+# "<cache>.json.XXXXXX" that older versions drew from mktemp.
+#
+# They are debris, not a design flaw to trap our way out of. Claude Code
+# cancels an in-flight statusline whenever a new update triggers, and a
+# process killed between its write and its rename runs no trap on the way
+# out - the rename is the only thing that was ever going to remove the
+# file. On the maintainer's Windows box that left 39 of them, the oldest
+# ten days old, and the count was still climbing.
+#
+# A write takes milliseconds, so ten minutes of age says the writer is
+# gone; a live writer's file is never in range. One fork, and the callers
+# are the background refreshers alone, which run behind a 300s gate. The
+# render path must never call this. `-mmin` and `-delete` are in both GNU
+# and BSD find, so Linux, macOS and Git for Windows all take this path.
+nut_sweep_write_temps() {
+  [ -d "$NUT_STATE_DIR" ] || return 0
+  find "$NUT_STATE_DIR" -maxdepth 1 -type f -name '*.json.*' -mmin +10 \
+    -delete 2>/dev/null
+  return 0
 }
 
 # Start a background job that outlives this script and is never awaited.

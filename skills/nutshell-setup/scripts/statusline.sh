@@ -11,8 +11,8 @@
 # is omitted gracefully, never rendered as a blank label.
 #
 # Freshness, the one thing to understand about this script: Claude Code
-# re-runs it once a second (refreshInterval) but does NOT recompute the
-# payload. Advisor and cost are read from disk, so the timer alone keeps
+# re-runs it on a timer (refreshInterval: every second, every fifth on
+# Windows, see nutshell-lib.sh) but does NOT recompute the payload. Advisor and cost are read from disk, so the timer alone keeps
 # them current. rate_limits is per-session payload state that Claude Code
 # refreshes only from that session's own API responses, so an idle tab
 # would freeze at its last reading; the shared rate cache below fixes that.
