@@ -111,14 +111,14 @@ effort_color() {
 
 # Alias -> display name, into ADVISOR_NAME. settings.json only stores the
 # bare alias and no runtime lookup exists for the resolved name, so this
-# WILL drift on new model releases (opus was "Opus 4.8", now "Opus 5" as of
-# 2026-07; fable was "Fable 5", now "Fable 5.1" as of 2026-09, Claude Code
-# 2.1.255+).
+# WILL drift on new model releases (opus was "Opus 4.8", then "Opus 5" as of
+# 2026-07, now "Opus 5.5" as of 2026-09; fable was "Fable 5", now "Fable 5.1"
+# as of 2026-09, Claude Code 2.1.255+).
 advisor_display_name() {
   case "$1" in
     fable)  ADVISOR_NAME='Fable 5.1' ;;
     sonnet) ADVISOR_NAME='Sonnet 5' ;;
-    opus)   ADVISOR_NAME='Opus 5' ;;
+    opus)   ADVISOR_NAME='Opus 5.5' ;;
     haiku)  ADVISOR_NAME='Haiku 4.5' ;;
     *)      ADVISOR_NAME="$1" ;;
   esac

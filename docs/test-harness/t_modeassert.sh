@@ -27,9 +27,9 @@ eq(){ [ "$2" = "$3" ] && ok "$1" || bad "$1" "got [$2] want [$3]"; }
 
 cfg true true true false simple
 eq "simple emits exactly one line" "$(run | wc -l)" "1"
-eq "simple, words, exact string" "$(run)" "Opus 5 (high) | adv: Opus 5 | ctx: 51.8k/200.0k | 5h: 42% (4h56m) | 7d: 67% (4d1h) | statusline-in-nutshell@main"
+eq "simple, words, exact string" "$(run)" "Opus 5 (high) | adv: Opus 5.5 | ctx: 51.8k/200.0k | 5h: 42% (4h56m) | 7d: 67% (4d1h) | statusline-in-nutshell@main"
 cfg true true true true simple
-eq "simple, emoji, exact string" "$(run)" "💡 Opus 5 (high) | 🎓 Opus 5 | ⏳ 51.8k/200.0k | 🕐 42% (4h56m) | 🔄 67% (4d1h) | 🌐 statusline-in-nutshell@main"
+eq "simple, emoji, exact string" "$(run)" "💡 Opus 5 (high) | 🎓 Opus 5.5 | ⏳ 51.8k/200.0k | 🕐 42% (4h56m) | 🔄 67% (4d1h) | 🌐 statusline-in-nutshell@main"
 cfg true true true false detail
 eq "detail still emits four lines" "$(run | wc -l)" "4"
 
