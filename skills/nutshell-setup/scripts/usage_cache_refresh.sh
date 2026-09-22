@@ -71,6 +71,10 @@ nut_ensure_dirs
 # rather than queueing behind it.
 nut_lock_acquire "$NUT_USAGE_LOCK" "$NUT_LOCK_STALE_USAGE" || exit 0
 
+# See nut_sweep_write_temps: killed renders leave write temporaries behind,
+# and the background refreshers are the ones that can afford to clear them.
+nut_sweep_write_temps
+
 token=$(jq -r '.claudeAiOauth.accessToken // empty' "$NUT_CREDENTIALS" 2>/dev/null)
 [ -n "$token" ] || exit 0
 

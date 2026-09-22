@@ -181,7 +181,8 @@ lock files, and deletes the old scripts only once every new file is in
 place), copies each of the six files into `bin/` when it is missing or
 differs from the bundled copy, and registers
 `"statusLine": {"type": "command", "command": "bash ~/.claude/nutshell/bin/statusline.sh", "refreshInterval": 1}`
-in `~/.claude/settings.json`. It skips the registration when
+in `~/.claude/settings.json` (`"refreshInterval": 5` on Windows, where a
+render costs ~150ms of process creation against ~1ms elsewhere). It skips the registration when
 `config.json` says `"disabled": true` (the user made the statusline
 inactive on purpose), when `settings.json` registers a statusline that
 is not ours, or when `settings.json` cannot be parsed or repaired. It

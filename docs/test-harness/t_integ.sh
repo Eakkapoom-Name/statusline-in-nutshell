@@ -83,6 +83,46 @@ payload='{"session_id":"s1","model":{"display_name":"Opus"},"workspace":{"curren
 r=$(printf '%s' "$payload" | bash "$BIN/statusline.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
 [ -n "$r" ] && ok "statusline renders ($(printf '%s' "$r" | wc -l) lines)" || bad "render" "empty output"
 
+# G2. write temporaries: a killed writer's leftovers are swept by the next
+# background refresh, a live writer's are not, and a write of its own
+# leaves nothing behind. The stale stamps are set with touch rather than by
+# waiting ten minutes; both flavours of date are tried, as everywhere else.
+old=$(date -d '-20 minutes' +%Y%m%d%H%M 2>/dev/null || date -v-20M +%Y%m%d%H%M 2>/dev/null)
+: > "$ST/rate_cache.json.424242"; : > "$ST/cost_cache.json.Ab3Xy9"; : > "$ST/rate_cache.json.now"
+touch -t "$old" "$ST/rate_cache.json.424242" "$ST/cost_cache.json.Ab3Xy9" 2>/dev/null
+printf '{"updated_at":1,"today_cost":0}\n' > "$ST/cost_cache.json"
+# Section F's holder is still on disk (it is stale-gated, not released), and
+# a refresher that cannot take the lock leaves before it sweeps anything.
+rm -f "$LK/cost_cache.lock.held"
+bash "$BIN/cost_cache_refresh.sh" >/dev/null 2>&1
+[ ! -e "$ST/rate_cache.json.424242" ] && [ ! -e "$ST/cost_cache.json.Ab3Xy9" ] \
+  && ok "the refresher swept both stale write temporaries" \
+  || bad "temp sweep" "left: $(ls "$ST" | grep -c 'json\.')"
+[ -e "$ST/rate_cache.json.now" ] && ok "a temporary younger than the gate is left alone" \
+  || bad "temp sweep" "removed a live writer's file"
+[ -f "$ST/cost_cache.json" ] && ok "the sweep never touches the caches themselves" \
+  || bad "temp sweep" "cost_cache.json is gone"
+rm -f "$ST/rate_cache.json.now"
+( . "$BIN/nutshell-lib.sh"; nut_write_atomic '{"a":1}' "$ST/sweeptest.json" )
+n=$(ls "$ST" | grep -c 'sweeptest\.json\.' || true)
+[ "$n" = "0" ] && [ -f "$ST/sweeptest.json" ] && ok "an atomic write leaves no temporary behind" \
+  || bad "atomic write" "$n leftovers"
+# And it is still private to the user. The mktemp this write used to draw
+# from created at 0600 and the rename carried that to the target; the umask
+# in nutshell-lib.sh is what keeps that true now that the temp file is a
+# plain redirection. Skipped where the filesystem does not honour a umask
+# at all, which is every MSYS path on Windows: it reports 0644 for
+# everything and the real permissions are ACLs.
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
+( umask 077; : > "$ST/.modeprobe" )
+if [ "$(mode_of "$ST/.modeprobe")" = "600" ]; then
+  m=$(mode_of "$ST/sweeptest.json")
+  [ "$m" = "600" ] && ok "an atomic write leaves the target 0600" || bad "write mode" "got $m"
+else
+  ok "file modes are not enforced here, nothing to assert about 0600"
+fi
+rm -f "$ST/.modeprobe" "$ST/sweeptest.json"
+
 # H. uninstall --purge leaves no locks directory
 bash "$BIN/statusline-toggle.sh" uninstall --yes --purge >/dev/null 2>&1
 [ ! -d "$LK" ] && ok "purge removed locks/" || bad "purge" "locks/ remains: $(ls -a "$LK" 2>/dev/null | tr '\n' ' ')"

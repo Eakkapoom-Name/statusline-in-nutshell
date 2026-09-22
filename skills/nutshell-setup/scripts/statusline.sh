@@ -11,8 +11,8 @@
 # is omitted gracefully, never rendered as a blank label.
 #
 # Freshness, the one thing to understand about this script: Claude Code
-# re-runs it once a second (refreshInterval) but does NOT recompute the
-# payload. Advisor and cost are read from disk, so the timer alone keeps
+# re-runs it on a timer (refreshInterval: every second, every fifth on
+# Windows, see nutshell-lib.sh) but does NOT recompute the payload. Advisor and cost are read from disk, so the timer alone keeps
 # them current. rate_limits is per-session payload state that Claude Code
 # refreshes only from that session's own API responses, so an idle tab
 # would freeze at its last reading; the shared rate cache below fixes that.
@@ -208,16 +208,30 @@ fmt_tokens_pair() {
 #
 # All bash: the loop is parameter substitution only, so this costs no fork
 # however deep the path is.
+#
+# The accent and the reset are expanded HERE, on their own, and the result
+# is assembled with plain concatenation. The assembled string must never be
+# handed to printf's %b, because the argument to %b is the caller's data as
+# much as it is color: a Windows path carries backslashes of its own, and
+# %b reads them as escapes. "C:\Users\name8\Documents" became "C:\Users",
+# a literal newline, then "ame8\Documents" - the workspace row broke across
+# two lines mid-path - while "\U" made bash write "printf: missing unicode
+# digit for \U" to stderr on every render. Two expansions of a one-token
+# color, rather than one of the whole line, is also a hair cheaper: the
+# count no longer grows with the depth of the path, and no fork is added,
+# so nothing about this is slower on Linux or macOS.
 color_path() {
-  local rest="$1" part out=""
+  local rest="$1" part out="" accent off
+  printf -v accent '%b' "$ORANGE"
+  printf -v off '%b' "$RESET"
   while :; do
     case "$rest" in
       */*) part="${rest%%/*}"; rest="${rest#*/}"
-         out="${out}${ORANGE}${part}${RESET}/" ;;
+         out="${out}${accent}${part}${off}/" ;;
       *) break ;;
     esac
   done
-  printf -v PATHOUT '%b' "${out}${ORANGE}${rest}${RESET}"
+  PATHOUT="${out}${accent}${rest}${off}"
 }
 
 # Colored block bar for a percentage (0-100) into BAR, e.g. "[███░░░░░░░]".
