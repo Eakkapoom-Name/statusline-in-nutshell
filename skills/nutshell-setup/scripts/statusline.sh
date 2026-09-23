@@ -41,7 +41,7 @@ nut_ensure_dirs
 AUTH_CACHE_MAX_AGE=300
 # A weekly window moves slowly and the probe is a network call, so this is
 # the longest gate here rather than the shortest.
-USAGE_CACHE_MAX_AGE=300
+ACCOUNT_USAGE_CACHE_MAX_AGE=300
 
 # This plugin's floor is stock bash 3.2 (macOS's /bin/bash), where `date`
 # and `tr` are the only way to do these things. Bash 4.2+ (Linux, WSL,
@@ -426,15 +426,15 @@ as_epoch() {
 # ---------------------------------------------------------------------------
 
 NUT_JQ_PROG='
-def obj($s): (try ($s | fromjson) catch null) as $v
-  | if ($v | type) == "object" then $v else {} end;
-obj($praw)    as $pl  |
-obj($cfgraw)  as $cfg |
-obj($setraw)  as $set |
-obj($authraw) as $au  |
-obj($rateraw) as $rc  |
-obj($usageraw) as $us |
-obj($catraw)  as $mc  |
+def obj($text): (try ($text | fromjson) catch null) as $value
+  | if ($value | type) == "object" then $value else {} end;
+obj($payload_raw)    as $payload  |
+obj($config_raw)  as $config |
+obj($settings_raw)  as $settings |
+obj($auth_raw) as $auth  |
+obj($shared_rate_limit_raw) as $shared_rate_limit_all  |
+obj($account_usage_raw) as $account_usage |
+obj($model_catalog_raw)  as $model_catalog  |
 
 # Part visibility. Raw tostring values, not `.key // true`: jq treats false
 # as empty, so `//` would un-hide a hidden part. A missing key reads
@@ -442,14 +442,14 @@ obj($catraw)  as $mc  |
 # shown for the parts, off for emoji, active for disabled. The session part
 # falls back to its pre-v0.3.0 key "rate" via has(), for the same reason.
 # Hidden on a first install, for the same reason and by the same test as
-# $cfg_mode below: an empty $cfg is a config.json that does not exist yet.
+# $config_mode below: an empty $config is a config.json that does not exist yet.
 # A config that exists without the key keeps failing open to shown, so an
 # upgrade never loses a row it already had.
-(if ($cfg | length) == 0 then "false" else ($cfg.cost | tostring) end) as $cfg_cost |
-((if ($cfg | has("session")) then $cfg.session else $cfg.rate end) | tostring) as $cfg_session |
-($cfg.workspace | tostring) as $cfg_workspace |
-($cfg.emoji | tostring) as $cfg_emoji |
-# Two different defaults, and the difference is deliberate. An EMPTY $cfg is
+(if ($config | length) == 0 then "false" else ($config.cost | tostring) end) as $config_cost |
+((if ($config | has("session")) then $config.session else $config.rate end) | tostring) as $config_session |
+($config.workspace | tostring) as $config_workspace |
+($config.emoji | tostring) as $config_emoji |
+# Two different defaults, and the difference is deliberate. An EMPTY $config is
 # a config.json that does not exist yet, which is a first install (sync.sh
 # registers the statusline, statusline-toggle.sh writes the config later),
 # and a first install starts on the one-line layout. A config that exists
@@ -460,27 +460,27 @@ obj($catraw)  as $mc  |
 # The accent color. Anything but the exact word "blue" reads as orange, so
 # a hand-edited value can never leave the row in a color nobody chose, and a
 # config written before this key existed keeps the look it had.
-(if ($cfg.color | tostring) == "blue" then "blue" else "orange" end) as $cfg_color |
-(if ($cfg | length) == 0 then "simple"
- else (($cfg.mode // "detail") | tostring) end) as $cfg_mode |
-($cfg.disabled | tostring) as $cfg_disabled |
-($cfg_session != "false") as $showrate |
+(if ($config.color | tostring) == "blue" then "blue" else "orange" end) as $config_color |
+(if ($config | length) == 0 then "simple"
+ else (($config.mode // "detail") | tostring) end) as $config_mode |
+($config.disabled | tostring) as $config_disabled |
+($config_session != "false") as $show_rate_limit |
 
 # Payload. `// ""` not `// empty` (empty is a zero-output generator and
 # would drop the whole array on a null field).
-($pl.model.display_name // "")                 as $model |
-($pl.effort.level // "")                       as $effort |
-($pl.context_window.used_percentage // "")     as $ctxu |
-($pl.context_window.total_input_tokens // "")  as $ctxut |
-($pl.context_window.context_window_size // "") as $ctxtt |
-($pl.cost.total_cost_usd // "")                as $cost |
-($pl.session_id // "")                         as $sid |
-($pl.workspace.current_dir // $pl.cwd // "")   as $ws |
-($pl.workspace.repo.owner // "")               as $ro |
-($pl.workspace.repo.name // "")                as $rn |
-(($pl.rate_limits // {}) | if type == "object" then . else {} end) as $p |
-(($p | length) > 0) as $rate_has |
-($pl.version // "") as $ccver |
+($payload.model.display_name // "")                 as $model |
+($payload.effort.level // "")                       as $effort |
+($payload.context_window.used_percentage // "")     as $context_used_percentage |
+($payload.context_window.total_input_tokens // "")  as $context_used_tokens |
+($payload.context_window.context_window_size // "") as $context_total_tokens |
+($payload.cost.total_cost_usd // "")                as $cost |
+($payload.session_id // "")                         as $session_id |
+($payload.workspace.current_dir // $payload.cwd // "")   as $workspace_dir |
+($payload.workspace.repo.owner // "")               as $repo_owner |
+($payload.workspace.repo.name // "")                as $repo_name |
+(($payload.rate_limits // {}) | if type == "object" then . else {} end) as $payload_rate_limit |
+(($payload_rate_limit | length) > 0) as $payload_has_rate_limit |
+($payload.version // "") as $claude_code_version |
 
 # The advisor display name. settings.json holds what /advisor wrote: an
 # alias ("fable", "opus", "sonnet") from the picker, or whatever was typed,
@@ -500,44 +500,44 @@ obj($catraw)  as $mc  |
 #     dropped by length, so "claude-haiku-4-5-20251001" reads [4,5].
 # No regex anywhere: split("-") is a plain string split, and a jq built
 # without oniguruma would reject test() or sub() and blank the whole row.
-def id_parts($i): $i | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
+def id_parts($id): $id | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
   | map(select(length <= 3 and ((try tonumber catch null) != null)) | tonumber);
-def id_base($i): $i | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
+def id_base($id): $id | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
   | map(select((length == 8 and ((try tonumber catch null) != null)) | not)) | join("-");
-(($set.advisorModel // "") | tostring) as $adv_raw |
-((($mc.catalog.config.models? | arrays) // [])
-  | map(select((.id | type) == "string" and (.name | type) == "string"))) as $mc_models |
-(if $adv_raw == "" or ($adv_raw | ascii_downcase) == "off" then ""
+(($settings.advisorModel // "") | tostring) as $advisor_raw |
+((($model_catalog.catalog.config.models? | arrays) // [])
+  | map(select((.id | type) == "string" and (.name | type) == "string"))) as $model_catalog_models |
+(if $advisor_raw == "" or ($advisor_raw | ascii_downcase) == "off" then ""
  else
    # Parenthesised: `as` binds tighter than `+`, so without them only the
    # tail would be bound and the capital letter would sit outside the pipe.
-   (($adv_raw[0:1] | ascii_upcase) + $adv_raw[1:]) as $adv_cap |
-   id_base($adv_raw) as $adv_base |
-   ([$mc_models[] | select(id_base(.id) == $adv_base)] | first // null) as $adv_exact |
-   ([$mc_models[] | select(((.short_name // "") | tostring | ascii_downcase) == ($adv_raw | ascii_downcase))]
-     | max_by(id_parts(.id))) as $adv_family |
-   (if $adv_exact != null then $adv_exact.name
-    elif $adv_family != null then $adv_family.name
-    else $adv_cap end)
- end) as $adv |
+   (($advisor_raw[0:1] | ascii_upcase) + $advisor_raw[1:]) as $advisor_capitalized |
+   id_base($advisor_raw) as $advisor_base |
+   ([$model_catalog_models[] | select(id_base(.id) == $advisor_base)] | first // null) as $advisor_exact |
+   ([$model_catalog_models[] | select(((.short_name // "") | tostring | ascii_downcase) == ($advisor_raw | ascii_downcase))]
+     | max_by(id_parts(.id))) as $advisor_family |
+   (if $advisor_exact != null then $advisor_exact.name
+    elif $advisor_family != null then $advisor_family.name
+    else $advisor_capitalized end)
+ end) as $advisor |
 
-# Per-model weekly window, from the cache usage_cache_refresh.sh writes.
+# Per-model weekly window, from the cache account_usage_cache_refresh.sh writes.
 # Keyed by the display name the server itself sends; "Fable" is the only one rendered,
 # and a cache without it (any other plan, or a probe that never ran) leaves
 # all three fields empty and the segment is skipped.
-(($us.models? | objects) // {}) as $um |
-(($um["Fable"] | objects) // {}) as $fab |
-(($fab.resets_at | numbers) // 0) as $fab_reset |
-(($fab | length) > 0 and $fab_reset > $now) as $fab_live |
-($us.updated_at // 0) as $u_upd |
+(($account_usage.models? | objects) // {}) as $account_usage_models |
+(($account_usage_models["Fable"] | objects) // {}) as $account_usage_fable |
+(($account_usage_fable.resets_at | numbers) // 0) as $account_usage_fable_resets_at |
+(($account_usage_fable | length) > 0 and $account_usage_fable_resets_at > $now) as $account_usage_fable_live |
+($account_usage.updated_at // 0) as $account_usage_updated_at |
 # The account-level five_hour and seven_day from the same cache. These are
 # the ONLY session-independent reading of those two windows: Claude Code
 # refreshes the payload rate_limits from the API responses of that session
 # and from nothing else, so in a tab that is sitting idle both the payload
 # and the shared rate cache are frozen at whatever was last published. The
 # endpoint is what corrects the row with no message sent.
-(($us.windows? | objects) // {}) as $uw |
-(($us.windows_at | numbers) // 0) as $u_wat |
+(($account_usage.windows? | objects) // {}) as $account_usage_windows |
+(($account_usage.windows_at | numbers) // 0) as $account_usage_windows_at |
 
 # Token counts formatted here in exact integer arithmetic, so the common
 # render needs no awk fork at all. Rounding one decimal place from a
@@ -545,155 +545,155 @@ def id_base($i): $i | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
 # division, which is EXACT unless the discarded part is exactly one half -
 # that is, unless frac % 100 == 50. Only then does the answer depend on
 # which side of the tie the IEEE double for n/1000 actually falls, which
-# integer maths cannot know; $tok_tie flags those and bash re-does both
+# integer maths cannot know; $token_tie flags those and bash re-does both
 # values with awk. Ties are 1 value in 100, so awk is skipped almost always.
-def fmt_tok($n):
-  if ($n | type) != "number" then ($n | tostring)
-  elif $n >= 1000000 then
-    (($n / 1000000) | floor) as $w | ($n % 1000000) as $frac |
-    ((($frac + 50000) / 100000) | floor) as $t |
-    (if $t >= 10 then "\($w + 1).0m" else "\($w).\($t)m" end)
-  elif $n >= 1000 then
-    (($n / 1000) | floor) as $w | ($n % 1000) as $frac |
-    ((($frac + 50) / 100) | floor) as $t |
-    (if $t >= 10 then "\($w + 1).0k" else "\($w).\($t)k" end)
-  else ($n | tostring) end;
-def is_tie($n):
-  if ($n | type) != "number" then false
-  elif $n >= 1000000 then (($n % 1000000) % 100000) == 50000
-  elif $n >= 1000 then (($n % 1000) % 100) == 50
+def fmt_tok($number):
+  if ($number | type) != "number" then ($number | tostring)
+  elif $number >= 1000000 then
+    (($number / 1000000) | floor) as $whole | ($number % 1000000) as $fraction |
+    ((($fraction + 50000) / 100000) | floor) as $tenths |
+    (if $tenths >= 10 then "\($whole + 1).0m" else "\($whole).\($tenths)m" end)
+  elif $number >= 1000 then
+    (($number / 1000) | floor) as $whole | ($number % 1000) as $fraction |
+    ((($fraction + 50) / 100) | floor) as $tenths |
+    (if $tenths >= 10 then "\($whole + 1).0k" else "\($whole).\($tenths)k" end)
+  else ($number | tostring) end;
+def is_tie($number):
+  if ($number | type) != "number" then false
+  elif $number >= 1000000 then (($number % 1000000) % 100000) == 50000
+  elif $number >= 1000 then (($number % 1000) % 100) == 50
   else false end;
-fmt_tok($ctxut) as $used_fmt |
-fmt_tok($ctxtt) as $total_fmt |
-(is_tie($ctxut) or is_tie($ctxtt)) as $tok_tie |
+fmt_tok($context_used_tokens) as $used_formatted |
+fmt_tok($context_total_tokens) as $total_formatted |
+(is_tie($context_used_tokens) or is_tie($context_total_tokens)) as $token_tie |
 
 # Auth verdict, per session: "" = unknown (no cache entry, or no
 # subscription_type key), "none" = metered billing, anything else = the
 # subscriptionType string. "none" cannot collide with a real plan name,
-# since a null subscriptionType is mapped to it explicitly. $envmetered
+# since a null subscriptionType is mapped to it explicitly. $environment_metered
 # carries the ANTHROPIC_*/CLAUDE_CODE_USE_* check, which settles "metered"
 # for the render or two before the probe lands and is only consulted while
 # the probe has said nothing.
-(if ($showrate and $sid != "")
-   then ((($au.sessions[$sid]?) | objects) // {})
-   else null end) as $ae |
-(if $ae == null then ""
-   else (if ($ae | has("subscription_type")) then ($ae.subscription_type // "none") else "" end)
- end) as $ap0 |
-(if $ap0 == "" and $envmetered == "true" then "none" else $ap0 end) as $plan |
-(if $ae == null then 0  else ($ae.updated_at // 0) end) as $a_upd |
-(if $ae == null then "" else ($ae.sig // "") end)       as $a_sig |
+(if ($show_rate_limit and $session_id != "")
+   then ((($auth.sessions[$session_id]?) | objects) // {})
+   else null end) as $auth_entry |
+(if $auth_entry == null then ""
+   else (if ($auth_entry | has("subscription_type")) then ($auth_entry.subscription_type // "none") else "" end)
+ end) as $auth_plan_raw |
+(if $auth_plan_raw == "" and $environment_metered == "true" then "none" else $auth_plan_raw end) as $plan |
+(if $auth_entry == null then 0  else ($auth_entry.updated_at // 0) end) as $auth_updated_at |
+(if $auth_entry == null then "" else ($auth_entry.sig // "") end)       as $auth_signature |
 
 # A metered session takes no part in the shared cache, neither reading nor
 # writing; nor does one whose session line is hidden.
-(if ($plan == "none") or ($showrate | not) then {} else $rc end) as $c |
+(if ($plan == "none") or ($show_rate_limit | not) then {} else $shared_rate_limit_all end) as $shared_rate_limit |
 # The endpoint windows carry the same gate for the same reason: they are the
 # numbers of the subscription account, and a metered tab must render none.
-(if ($plan == "none") or ($showrate | not) then {} else $uw end) as $uwg |
-((($pl.cost.total_cost_usd | numbers) // 0) > 0) as $responded |
-($cost | tostring) as $costs |
+(if ($plan == "none") or ($show_rate_limit | not) then {} else $account_usage_windows end) as $account_usage_windows_gated |
+((($payload.cost.total_cost_usd | numbers) // 0) > 0) as $payload_responded |
+($cost | tostring) as $cost_string |
 
 # Keep only a window that carries a usable numeric resets_at.
-def clean($o):
-  if ($o | type) == "object" and ($o.resets_at | type) == "number"
-  then {used_percentage: (($o.used_percentage | numbers) // 0), resets_at: $o.resets_at}
+def clean($object):
+  if ($object | type) == "object" and ($object.resets_at | type) == "number"
+  then {used_percentage: (($object.used_percentage | numbers) // 0), resets_at: $object.resets_at}
   else null end;
-clean($p.five_hour) as $pf | clean($p.seven_day) as $ps |
+clean($payload_rate_limit.five_hour) as $payload_five_hour | clean($payload_rate_limit.seven_day) as $payload_seven_day |
 # This session is fresh when its payload carries limits and its cost grew
 # since the signature on file. A session with no signature on file, a
 # non-numeric one, or a cost that fell (reset by /clear) records the new
 # signature and waits for its next response.
-(if $pf == null and $ps == null then "" else $costs end) as $sig |
-(($c.sessions | objects) // {}) as $sessions |
-(($sessions[$sid]? | objects | .sig | strings) // null) as $stored |
-(try ($sig | tonumber) catch null) as $sn |
-(if $stored == null then null else (try ($stored | tonumber) catch null) end) as $tn |
-($sid != "" and $sig != "") as $carries |
-($carries and $sn != null and $tn != null and $sn > $tn) as $fresh |
-($carries and ($fresh | not) and $sig != $stored) as $record |
-def live($v): if $v != null and $v.resets_at > $now then $v else null end;
-live(clean($uwg["five_hour"])) as $uf |
-live(clean($uwg["seven_day"])) as $usv |
+(if $payload_five_hour == null and $payload_seven_day == null then "" else $cost_string end) as $payload_signature |
+(($shared_rate_limit.sessions | objects) // {}) as $shared_rate_limit_sessions |
+(($shared_rate_limit_sessions[$session_id]? | objects | .sig | strings) // null) as $shared_rate_limit_signature |
+(try ($payload_signature | tonumber) catch null) as $signature_number |
+(if $shared_rate_limit_signature == null then null else (try ($shared_rate_limit_signature | tonumber) catch null) end) as $stored_signature_number |
+($session_id != "" and $payload_signature != "") as $carries |
+($carries and $signature_number != null and $stored_signature_number != null and $signature_number > $stored_signature_number) as $payload_fresh |
+($carries and ($payload_fresh | not) and $payload_signature != $shared_rate_limit_signature) as $shared_rate_limit_record |
+def live($value): if $value != null and $value.resets_at > $now then $value else null end;
+live(clean($account_usage_windows_gated["five_hour"])) as $account_usage_five_hour |
+live(clean($account_usage_windows_gated["seven_day"])) as $account_usage_seven_day |
 # `windows_at`, never `updated_at`: the latter is stamped by a FAILED probe
 # too, so weighing it here would let an endpoint that is down outrank a
 # reading another session published since. An endpoint newer than the cache
 # outranks it; the cache still outranks the frozen payload of an idle tab.
-(($c.measured_at | numbers) // 0) as $c_meas |
-($u_wat > $c_meas) as $endpoint_fresher |
-($endpoint_fresher and ($uf != null or $usv != null)) as $endpoint_used |
+(($shared_rate_limit.measured_at | numbers) // 0) as $shared_rate_limit_measured_at |
+($account_usage_windows_at > $shared_rate_limit_measured_at) as $account_usage_newer |
+($account_usage_newer and ($account_usage_five_hour != null or $account_usage_seven_day != null)) as $account_usage_used |
 # A fresh session renders and publishes its own reading, falling back to the
 # cache and then the endpoint for a window its payload lacks or has expired;
 # an idle one renders whichever of the endpoint and the cache was measured
 # later, falling back likewise.
-def pick($w; $pw; $uv):
-  if $fresh then (live($pw) // live(clean($c[$w])) // $uv)
-  elif $endpoint_fresher then ($uv // live(clean($c[$w])) // live($pw))
-  else (live(clean($c[$w])) // live($pw) // $uv) end;
-pick("five_hour"; $pf; $uf) as $f | pick("seven_day"; $ps; $usv) as $s |
+def pick($window; $payload_window; $account_usage_window):
+  if $payload_fresh then (live($payload_window) // live(clean($shared_rate_limit[$window])) // $account_usage_window)
+  elif $account_usage_newer then ($account_usage_window // live(clean($shared_rate_limit[$window])) // live($payload_window))
+  else (live(clean($shared_rate_limit[$window])) // live($payload_window) // $account_usage_window) end;
+pick("five_hour"; $payload_five_hour; $account_usage_five_hour) as $picked_five_hour | pick("seven_day"; $payload_seven_day; $account_usage_seven_day) as $picked_seven_day |
 # Windows seen on this plan: what the cache remembers, if it was recorded
 # under the same plan, plus whatever is live right now.
-(($c.seen | objects) // {}) as $seen |
-(if ($seen.plan // "") == $plan then (($seen.windows | arrays) // []) else [] end
-  + (if $f == null then [] else ["five_hour"] end)
-  + (if $s == null then [] else ["seven_day"] end)
-  | unique) as $windows |
+(($shared_rate_limit.seen | objects) // {}) as $shared_rate_limit_seen |
+(if ($shared_rate_limit_seen.plan // "") == $plan then (($shared_rate_limit_seen.windows | arrays) // []) else [] end
+  + (if $picked_five_hour == null then [] else ["five_hour"] end)
+  + (if $picked_seven_day == null then [] else ["seven_day"] end)
+  | unique) as $seen_windows |
 # The sessions map only changes on a publish or a (re)sighting, never on an
 # idle render: prune week-old (or future-stamped) entries and record this
 # session only then.
-(if $fresh or $record then
-   ($sessions | with_entries(select((.value.at? | numbers) != null
+(if $payload_fresh or $shared_rate_limit_record then
+   ($shared_rate_limit_sessions | with_entries(select((.value.at? | numbers) != null
        and .value.at > ($now - 604800) and .value.at <= $now)))
-   + {($sid): {sig: $sig, at: $now}}
- else $sessions end) as $sessions_new |
+   + {($session_id): {sig: $payload_signature, at: $now}}
+ else $shared_rate_limit_sessions end) as $shared_rate_limit_sessions_new |
 # Show/omit per window. Order matters: a live reading is shown no matter
 # what the auth probe said, so a false "metered" verdict can only ever cost
 # the pre-first-response 0%, never a real number. Once any window has been
 # seen on this plan the plan is known, and a window missing from that set
 # stays omitted even before the first response, so a Team seat does not
 # flash a weekly 0% at every start.
-def show($w; $v):
-  if $v != null then true
+def show($window; $value):
+  if $value != null then true
   elif $plan == "none" then false
-  elif ($windows | index($w)) != null then true
-  elif ($windows | length) > 0 then false
-  elif $responded then false
+  elif ($seen_windows | index($window)) != null then true
+  elif ($seen_windows | length) > 0 then false
+  elif $payload_responded then false
   else true end;
-( (if $f == null then {} else {five_hour: $f} end)
-  + (if $s == null then {} else {seven_day: $s} end)
-  + (if $fresh then {measured_at: $now}
-     elif $endpoint_used then {measured_at: $u_wat}
-     elif ($c.measured_at | type) == "number" then {measured_at: $c.measured_at}
+( (if $picked_five_hour == null then {} else {five_hour: $picked_five_hour} end)
+  + (if $picked_seven_day == null then {} else {seven_day: $picked_seven_day} end)
+  + (if $payload_fresh then {measured_at: $now}
+     elif $account_usage_used then {measured_at: $account_usage_windows_at}
+     elif ($shared_rate_limit.measured_at | type) == "number" then {measured_at: $shared_rate_limit.measured_at}
      else {} end)
-  + (if ($windows | length) == 0 then {} else {seen: {plan: $plan, windows: $windows}} end)
-  + (if ($sessions_new | length) == 0 then {} else {sessions: $sessions_new} end)
-) as $merged |
+  + (if ($seen_windows | length) == 0 then {} else {seen: {plan: $plan, windows: $seen_windows}} end)
+  + (if ($shared_rate_limit_sessions_new | length) == 0 then {} else {sessions: $shared_rate_limit_sessions_new} end)
+) as $shared_rate_limit_new |
 
-[ $model, $effort, $ctxu, $ctxut, $ctxtt, $cost, $sid, $ws, $ro, $rn, $rate_has,
-  $adv, $used_fmt, $total_fmt, $tok_tie,
-  $cfg_cost, $cfg_session, $cfg_workspace, $cfg_emoji, $cfg_disabled,
-  $plan, $a_upd, $a_sig,
-  (if $showrate then show("five_hour"; $f) else "" end),
-  (if $showrate then ($f.used_percentage // "") else "" end),
-  (if $showrate then ($f.resets_at // "") else "" end),
-  (if $showrate then show("seven_day"; $s) else "" end),
-  (if $showrate then ($s.used_percentage // "") else "" end),
-  (if $showrate then ($s.resets_at // "") else "" end),
-  (if $showrate then ($merged | tojson) else "" end),
-  (if $showrate then (($merged | tojson) != ($c | tojson)) else false end),
-  $u_upd, $ccver, $cfg_color,
+[ $model, $effort, $context_used_percentage, $context_used_tokens, $context_total_tokens, $cost, $session_id, $workspace_dir, $repo_owner, $repo_name, $payload_has_rate_limit,
+  $advisor, $used_formatted, $total_formatted, $token_tie,
+  $config_cost, $config_session, $config_workspace, $config_emoji, $config_disabled,
+  $plan, $auth_updated_at, $auth_signature,
+  (if $show_rate_limit then show("five_hour"; $picked_five_hour) else "" end),
+  (if $show_rate_limit then ($picked_five_hour.used_percentage // "") else "" end),
+  (if $show_rate_limit then ($picked_five_hour.resets_at // "") else "" end),
+  (if $show_rate_limit then show("seven_day"; $picked_seven_day) else "" end),
+  (if $show_rate_limit then ($picked_seven_day.used_percentage // "") else "" end),
+  (if $show_rate_limit then ($picked_seven_day.resets_at // "") else "" end),
+  (if $show_rate_limit then ($shared_rate_limit_new | tojson) else "" end),
+  (if $show_rate_limit then (($shared_rate_limit_new | tojson) != ($shared_rate_limit | tojson)) else false end),
+  $account_usage_updated_at, $claude_code_version, $config_color,
   # Both empty unless the window is present AND still open. An expired one
   # is dropped rather than frozen: Claude Code does the same with its own
   # windows, and a stale weekly number is worse than no number. Nothing here
   # ever renders a placeholder 0%.
-  (if $fab_live then (($fab.percent | numbers) // 0) else "" end),
+  (if $account_usage_fable_live then (($account_usage_fable.percent | numbers) // 0) else "" end),
   # The reset stamp comes from the plan weekly window, not from the usage
   # endpoint: the two describe the same weekly reset but sit minutes apart
   # (different clocks, different rounding), and one row showing two weekly
   # resets reads as a bug. The endpoint stamp is the fallback for a session
   # whose weekly window has already been dropped from the payload.
-  (if $fab_live then ((($s.resets_at | numbers) // $fab_reset)) else "" end),
-  $cfg_mode
-] | map(tostring) | join($sep)
+  (if $account_usage_fable_live then ((($picked_seven_day.resets_at | numbers) // $account_usage_fable_resets_at)) else "" end),
+  $config_mode
+] | map(tostring) | join($separator)
 '
 
 # --rawfile for a file that exists, an empty --arg for one that does not.
@@ -706,7 +706,7 @@ nut_jq_file_arg() {
 }
 
 read_all() {
-  local payload envmetered
+  local payload environment_metered
 
   # `read -d ''` consumes stdin whole with no fork; $(cat) cost one.
   IFS= read -r -d '' payload
@@ -715,11 +715,11 @@ read_all() {
   # one of these (that is how such a session gets its credentials at all),
   # so they settle "metered" for the render or two before the probe lands,
   # which would otherwise fail open and flash another account's numbers.
-  envmetered=false
+  environment_metered=false
   if [ -n "${ANTHROPIC_BASE_URL:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] \
      || [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${CLAUDE_CODE_USE_BEDROCK:-}" ] \
      || [ -n "${CLAUDE_CODE_USE_VERTEX:-}" ]; then
-    envmetered=true
+    environment_metered=true
   fi
 
   # The \x1f field separator is passed in rather than written into the jq
@@ -738,13 +738,13 @@ read_all() {
   # `statusline-toggle.sh off` did not take effect, and the rate cache was
   # rewritten every render because its own serialisation never compared
   # equal to itself.)
-  NUT_JQ_ARGS=( -nrj --argjson now "$NOW" --arg envmetered "$envmetered" \
-                --arg praw "$payload" --arg sep $'\x1f' )
-  nut_jq_file_arg cfgraw  "$NUT_CONFIG"
-  nut_jq_file_arg setraw  "$NUT_SETTINGS"
-  nut_jq_file_arg authraw "$NUT_AUTH_CACHE"
-  nut_jq_file_arg rateraw "$NUT_RATE_CACHE"
-  nut_jq_file_arg usageraw "$NUT_USAGE_CACHE"
+  NUT_JQ_ARGS=( -nrj --argjson now "$NOW" --arg environment_metered "$environment_metered" \
+                --arg payload_raw "$payload" --arg separator $'\x1f' )
+  nut_jq_file_arg config_raw "$NUT_CONFIG"
+  nut_jq_file_arg settings_raw "$NUT_SETTINGS"
+  nut_jq_file_arg auth_raw "$NUT_AUTH_CACHE"
+  nut_jq_file_arg shared_rate_limit_raw "$NUT_SHARED_RATE_LIMIT_CACHE"
+  nut_jq_file_arg account_usage_raw "$NUT_ACCOUNT_USAGE_CACHE"
   # The newest model catalog, by mtime. Claude Code keeps one file per
   # account and never prunes the old ones, and an old one can lack the model
   # the advisor resolves to today (a catalog from before Opus 5.5 existed).
@@ -757,7 +757,7 @@ read_all() {
     [ -f "$cand" ] || continue
     if [ -z "$cat_file" ] || [ "$cand" -nt "$cat_file" ]; then cat_file="$cand"; fi
   done
-  nut_jq_file_arg catraw "$cat_file"
+  nut_jq_file_arg model_catalog_raw "$cat_file"
 
   # Defaults for the case where jq is missing or errors: every part shown,
   # emoji off, active. The statusline degrades to what the payload alone
@@ -769,8 +769,8 @@ read_all() {
   auth_plan=""; auth_updated_at=0; auth_sig=""
   five_show=""; five_pct=""; five_reset=""
   week_show=""; week_pct=""; week_reset=""
-  rate_new=""; rate_changed=false
-  usage_updated_at=0; cc_version=""; cfg_color="orange"; fable_pct=""; fable_reset=""
+  shared_rate_limit_new=""; shared_rate_limit_changed=false
+  account_usage_updated_at=0; cc_version=""; cfg_color="orange"; fable_pct=""; fable_reset=""
   cfg_mode="detail"
 
   IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens \
@@ -779,18 +779,18 @@ read_all() {
       cfg_cost cfg_session cfg_workspace cfg_emoji cfg_disabled \
       auth_plan auth_updated_at auth_sig \
       five_show five_pct five_reset week_show week_pct week_reset \
-      rate_new rate_changed \
-      usage_updated_at cc_version cfg_color fable_pct fable_reset \
+      shared_rate_limit_new shared_rate_limit_changed \
+      account_usage_updated_at cc_version cfg_color fable_pct fable_reset \
       cfg_mode < <(jq "${NUT_JQ_ARGS[@]}" "$NUT_JQ_PROG" 2>/dev/null)
 
   # Belt and braces behind the -j above: only the final field could ever
   # pick up a stray carriage return, so strip one if some other jq build
   # still manages to emit it. Both of the last two are stripped, and which
-  # one is last has changed once already: rate_changed gates a disk write,
+  # one is last has changed once already: shared_rate_limit_changed gates a disk write,
   # and cfg_mode is compared against an exact string, so a trailing \r there
   # would silently force the detail layout on the one platform (Git for
   # Windows, native jq, CRLF stdout) this guard exists for.
-  rate_changed="${rate_changed%$'\r'}"
+  shared_rate_limit_changed="${shared_rate_limit_changed%$'\r'}"
   cfg_mode="${cfg_mode%$'\r'}"
 
   # Fail open exactly as the old per-part reads did.
@@ -864,16 +864,16 @@ spawn_auth_probe_if_stale() {
 # An unknown verdict (no probe yet) does not spawn either, so the first
 # render of a fresh session never fires a network call: the auth probe lands
 # first and this follows on a later render.
-spawn_usage_probe_if_stale() {
+spawn_account_usage_refresh_if_stale() {
   local usage_age
-  as_epoch "$usage_updated_at"
+  as_epoch "$account_usage_updated_at"
   usage_age=$(( NOW - AS_EPOCH ))
-  [ "$usage_age" -lt 0 ] && usage_age="$USAGE_CACHE_MAX_AGE"
+  [ "$usage_age" -lt 0 ] && usage_age="$ACCOUNT_USAGE_CACHE_MAX_AGE"
   if [ "$show_rate" = true ] && [ -n "$auth_plan" ] && [ "$auth_plan" != none ] \
-     && [ "$usage_age" -ge "$USAGE_CACHE_MAX_AGE" ] \
+     && [ "$usage_age" -ge "$ACCOUNT_USAGE_CACHE_MAX_AGE" ] \
      && command -v curl >/dev/null 2>&1 \
-     && [ -f "$NUT_BIN_DIR/usage_cache_refresh.sh" ]; then
-    nut_spawn bash "$NUT_BIN_DIR/usage_cache_refresh.sh" "$cc_version"
+     && [ -f "$NUT_BIN_DIR/account_usage_cache_refresh.sh" ]; then
+    nut_spawn bash "$NUT_BIN_DIR/account_usage_cache_refresh.sh" "$cc_version"
   fi
 }
 
@@ -881,13 +881,13 @@ spawn_usage_probe_if_stale() {
 # (several idle sessions re-rendering once a second) does no disk writes at
 # all. Besides a publish or a sighting, that is an expired window being
 # dropped, a `seen` plan changing, or a window the cache lacks being filled
-# from this session's own reading. jq decided `rate_changed` by comparing
+# from this session's own reading. jq decided `shared_rate_limit_changed` by comparing
 # the merged object against the one it read, so no second compare is needed
 # here.
-write_rate_cache_if_changed() {
-  if [ "$show_rate" = true ] && [ "$rate_changed" = true ] \
-     && [ -n "$rate_new" ] && [ "$auth_plan" != none ]; then
-    nut_write_atomic "$rate_new" "$NUT_RATE_CACHE"
+write_shared_rate_limit_cache_if_changed() {
+  if [ "$show_rate" = true ] && [ "$shared_rate_limit_changed" = true ] \
+     && [ -n "$shared_rate_limit_new" ] && [ "$auth_plan" != none ]; then
+    nut_write_atomic "$shared_rate_limit_new" "$NUT_SHARED_RATE_LIMIT_CACHE"
   fi
 }
 
@@ -1227,8 +1227,8 @@ main() {
   # hand back. Reading the files above has no side effects.
   [ "$disabled" = true ] && exit 0
   spawn_auth_probe_if_stale
-  spawn_usage_probe_if_stale
-  write_rate_cache_if_changed
+  spawn_account_usage_refresh_if_stale
+  write_shared_rate_limit_cache_if_changed
   if [ "$cfg_mode" = simple ]; then
     build_simple
     join_segments "${simple[@]}"

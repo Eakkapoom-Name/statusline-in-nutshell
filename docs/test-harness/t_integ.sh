@@ -62,20 +62,20 @@ r=$(printf '%s' "$payload" | bash "$BIN/statusline.sh" 2>&1 | sed 's/\x1b\[[0-9;
 # leaves nothing behind. The stale stamps are set with touch rather than by
 # waiting ten minutes; both flavours of date are tried, as everywhere else.
 old=$(date -d '-20 minutes' +%Y%m%d%H%M 2>/dev/null || date -v-20M +%Y%m%d%H%M 2>/dev/null)
-: > "$ST/rate_cache.json.424242"; : > "$ST/cost_cache.json.Ab3Xy9"; : > "$ST/rate_cache.json.now"
-touch -t "$old" "$ST/rate_cache.json.424242" "$ST/cost_cache.json.Ab3Xy9" 2>/dev/null
-printf '{"measured_at":1}\n' > "$ST/rate_cache.json"
+: > "$ST/shared_rate_limit_cache.json.424242"; : > "$ST/cost_cache.json.Ab3Xy9"; : > "$ST/shared_rate_limit_cache.json.now"
+touch -t "$old" "$ST/shared_rate_limit_cache.json.424242" "$ST/cost_cache.json.Ab3Xy9" 2>/dev/null
+printf '{"measured_at":1}\n' > "$ST/shared_rate_limit_cache.json"
 # A refresher that cannot take its lock leaves before it sweeps anything.
 rm -f "$LK/auth_cache.lock.held"
 bash "$BIN/auth_cache_refresh.sh" sweep-1 >/dev/null 2>&1
-[ ! -e "$ST/rate_cache.json.424242" ] && [ ! -e "$ST/cost_cache.json.Ab3Xy9" ] \
+[ ! -e "$ST/shared_rate_limit_cache.json.424242" ] && [ ! -e "$ST/cost_cache.json.Ab3Xy9" ] \
   && ok "the refresher swept both stale write temporaries" \
   || bad "temp sweep" "left: $(ls "$ST" | grep -c 'json\.')"
-[ -e "$ST/rate_cache.json.now" ] && ok "a temporary younger than the gate is left alone" \
+[ -e "$ST/shared_rate_limit_cache.json.now" ] && ok "a temporary younger than the gate is left alone" \
   || bad "temp sweep" "removed a live writer's file"
-[ -f "$ST/rate_cache.json" ] && ok "the sweep never touches the caches themselves" \
-  || bad "temp sweep" "rate_cache.json is gone"
-rm -f "$ST/rate_cache.json.now"
+[ -f "$ST/shared_rate_limit_cache.json" ] && ok "the sweep never touches the caches themselves" \
+  || bad "temp sweep" "shared_rate_limit_cache.json is gone"
+rm -f "$ST/shared_rate_limit_cache.json.now"
 ( . "$BIN/nutshell-lib.sh"; nut_write_atomic '{"a":1}' "$ST/sweeptest.json" )
 n=$(ls "$ST" | grep -c 'sweeptest\.json\.' || true)
 [ "$n" = "0" ] && [ -f "$ST/sweeptest.json" ] && ok "an atomic write leaves no temporary behind" \

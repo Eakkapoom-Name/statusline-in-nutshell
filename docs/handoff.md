@@ -12,6 +12,13 @@ those tests happen. Delete or rewrite it once they do.
 > Every item below that asks for a `ccusage` scan, a cost row, a reset or the
 > doctor's `--probe` no longer applies and can be skipped. The suite counts
 > in the tables are from before that change; see `docs/test-harness/README.md`.
+>
+> Update 2026-09-24: the two rate caches were renamed for what they hold.
+> `state/rate_cache.json` is now `state/shared_rate_limit_cache.json`,
+> `state/usage_cache.json` is now `state/account_usage_cache.json`, and
+> `usage_cache_refresh.sh` is now `account_usage_cache_refresh.sh` (lock
+> `locks/account_usage_cache.lock`). The sync renames an existing install. The
+> names below were updated; nothing to re-verify beyond the items already listed.
 
 ## What shipped in 0.3.4
 
@@ -45,7 +52,7 @@ All on `main`, none of it tagged, and every item below is Linux-only so far:
    line 2 and cost is line 3. `show`, `hide` and `status` follow that order,
    and the cost labels are `weekly:` and `monthly:`.
 3. **A per-model weekly window** (the `fable` segment), experimental. A
-   sixth installed script, `usage_cache_refresh.sh`, probes
+   sixth installed script, `account_usage_cache_refresh.sh`, probes
    `https://api.anthropic.com/api/oauth/usage` with the token from
    `~/.claude/.credentials.json`, passed to curl through a 0600 `-K` config
    file rather than argv. Omitted entirely when there is no such window.
@@ -120,8 +127,8 @@ Then the 0.3.5 surfaces, none of which has ever run on a Mac:
 
 - **The per-model weekly window will be absent, and that is correct.** macOS
   keeps its OAuth credentials in the Keychain, so `~/.claude/.credentials.json`
-  usually does not exist and `usage_cache_refresh.sh` exits before it probes.
-  Confirm the row is simply missing and that no `state/usage_cache.json` is
+  usually does not exist and `account_usage_cache_refresh.sh` exits before it probes.
+  Confirm the row is simply missing and that no `state/account_usage_cache.json` is
   written, rather than a 0% segment or an error. If the file DOES exist on a
   given Mac, confirm the probe works and the segment appears.
 - **`curl` is reported ok.** It ships with macOS, so the doctor's `curl` row
@@ -167,7 +174,7 @@ still unrun, and the risk list below it stands unchanged for those.
   `os windows Windows (Git Bash)`, finds `winget` and `npm`, and every
   dependency row resolves to a real path, including jq under the WinGet
   package directory.
-- **The usage probe end to end.** `state/usage_cache.json` exists and the
+- **The usage probe end to end.** `state/account_usage_cache.json` exists and the
   per-model weekly segment renders with a converted reset date, which is
   `curl -K <posix path>` surviving MSYS path rewriting and
   `fromdateiso8601` working in the native jq - two of the 0.3.5 risks
@@ -223,7 +230,7 @@ The 0.3.5 work adds five more, all of them Windows-specific by nature:
   when the callee is a native `.exe`, and Windows 10 and later ship their
   own `curl.exe`. Confirm the probe still authenticates, and confirm the
   temp file is deleted afterwards whichever curl runs.
-- **`fromdateiso8601` in a native jq.** `usage_cache_refresh.sh` converts
+- **`fromdateiso8601` in a native jq.** `account_usage_cache_refresh.sh` converts
   the endpoint's ISO stamp with it. jq's date builtins lean on the C
   library and are the part of jq most likely to differ on a Windows build.
   A stamp that fails to convert makes the entry drop out silently, which

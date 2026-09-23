@@ -4,7 +4,8 @@
 # statusLine command in settings.json. The nutshell-setup skill runs this
 # same script as the mid-session repair.
 #
-# Never touches user data: config.json and everything under state/. Always
+# Never touches user data: config.json and everything under state/, except
+# for renaming the two caches that took new names after 0.3.6. Always
 # exits 0 so a sync problem can never block a session start. Silent means
 # silent: nothing on stderr either. The `exec` below comes first because a
 # trailing `2>/dev/null` on a failing redirection (such as `exec 9>"$LOCK"`)
@@ -61,6 +62,9 @@ if [ "$all_installed" -eq 1 ]; then
   for f in $NUT_RETIRED_BIN_FILES; do
     rm -f "$NUT_BIN_DIR/$f" 2>/dev/null
   done
+  # The two caches renamed after 0.3.6, for the same reason: only now do
+  # the scripts that read the new names exist.
+  nut_migrate_renamed_state
 fi
 
 # Register the statusLine command, unless the user turned the statusline

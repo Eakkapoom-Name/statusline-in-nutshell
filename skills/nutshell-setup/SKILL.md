@@ -20,10 +20,10 @@ Everything this plugin owns lives under `~/.claude/nutshell/`:
 ```
 ~/.claude/nutshell/
   bin/     nutshell-lib.sh  statusline.sh  statusline-toggle.sh
-           auth_cache_refresh.sh  usage_cache_refresh.sh
+           auth_cache_refresh.sh  account_usage_cache_refresh.sh
   config.json
-  state/   rate_cache.json  auth_cache.json  usage_cache.json
-  locks/   sync.lock  auth_cache.lock  usage_cache.lock
+  state/   shared_rate_limit_cache.json  auth_cache.json  account_usage_cache.json
+  locks/   sync.lock  auth_cache.lock  account_usage_cache.lock
 ```
 
 An install from before the ccusage cost windows were retired may still

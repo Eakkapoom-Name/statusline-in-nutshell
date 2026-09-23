@@ -421,9 +421,11 @@ cmd_uninstall() {
   # pre-0.3.4 installs left behind for flock, the .held file is the lock
   # the library takes now, and an uninstall that removed only one would
   # leave locks/ non-empty and the rmdir below would keep the directory.
-  rm -f "$NUT_SYNC_LOCK" "$NUT_COST_LOCK" "$NUT_AUTH_LOCK" "$NUT_USAGE_LOCK" \
+  # The account usage lock is swept under its 0.3.6 name as well, for an
+  # install whose sync never ran nut_migrate_renamed_state.
+  rm -f "$NUT_SYNC_LOCK" "$NUT_COST_LOCK" "$NUT_AUTH_LOCK" "$NUT_ACCOUNT_USAGE_LOCK" \
         "$NUT_SYNC_LOCK.held" "$NUT_COST_LOCK.held" "$NUT_AUTH_LOCK.held" \
-        "$NUT_USAGE_LOCK.held"
+        "$NUT_ACCOUNT_USAGE_LOCK.held" "$NUT_OLD_USAGE_LOCK" "$NUT_OLD_USAGE_LOCK.held"
   # Every installed script but this one, which goes last so the message
   # below always gets printed, and any a previous version installed that
   # sync.sh has not removed yet.
@@ -438,7 +440,8 @@ cmd_uninstall() {
   if [ "$purge" = true ]; then
     rm -f "$NUT_CONFIG" \
           "$NUT_COST_CACHE" "$NUT_COST_LEDGER" "$NUT_COST_BASELINE" \
-          "$NUT_RATE_CACHE" "$NUT_AUTH_CACHE" "$NUT_USAGE_CACHE"
+          "$NUT_SHARED_RATE_LIMIT_CACHE" "$NUT_AUTH_CACHE" "$NUT_ACCOUNT_USAGE_CACHE" \
+          "$NUT_OLD_RATE_CACHE" "$NUT_OLD_USAGE_CACHE"
     # Extra per-source ledgers, written by other tools and folded into the
     # retired ccusage cost windows. Nothing reads them now. A glob, since
     # the source names are not ours to know; with no match the literal pattern reaches rm -f, which

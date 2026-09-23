@@ -23,7 +23,7 @@ touch -t 202601010000 "$MC/old-cc.json"; touch -t 202609010000 "$MC/new-cc.json"
 # +30m on the hour-granular one buys half a unit of slack either way.
 now=$(date +%s); five=$((now+17760+30)); week=$((now+349200+1800))
 printf '{"sessions":{"s1":{"subscription_type":"max","updated_at":%s,"sig":1}}}\n' "$now" > "$ST/auth_cache.json"
-printf '{"five_hour":{"used_percentage":42,"resets_at":%s},"seven_day":{"used_percentage":67,"resets_at":%s},"seen":{"plan":"max","windows":["five_hour","seven_day"]},"sessions":{"s1":{"sig":1,"at":%s}},"measured_at":%s}\n' "$five" "$week" "$now" "$now" > "$ST/rate_cache.json"
+printf '{"five_hour":{"used_percentage":42,"resets_at":%s},"seven_day":{"used_percentage":67,"resets_at":%s},"seen":{"plan":"max","windows":["five_hour","seven_day"]},"sessions":{"s1":{"sig":1,"at":%s}},"measured_at":%s}\n' "$five" "$week" "$now" "$now" > "$ST/shared_rate_limit_cache.json"
 D="$HOME/work/statusline-in-nutshell"; mkdir -p "$D/.git" "$D/skills/deep"; printf 'ref: refs/heads/main\n' > "$D/.git/HEAD"
 P='{"session_id":"s1","model":{"display_name":"Opus 5"},"effort":{"level":"high"},"context_window":{"used_percentage":37,"total_input_tokens":51800,"context_window_size":200000},"workspace":{"current_dir":"'"$D"'","repo":{"owner":"Eakkapoom-Name","name":"statusline-in-nutshell"}},"cost":{"total_cost_usd":3.4567},"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":'"$five"'},"seven_day":{"used_percentage":67,"resets_at":'"$week"'}}}'
 cfg() { printf '{"model":true,"cost":%s,"session":%s,"workspace":%s,"emoji":%s,"mode":"%s","disabled":false}\n' "$1" "$2" "$3" "$4" "$5" > "$HOME/.claude/nutshell/config.json"; }
@@ -146,20 +146,20 @@ bash "$BIN/statusline-toggle.sh" all off >/dev/null 2>&1
 eq "all off still renders one line in simple" "$(run | wc -l)" "1"
 bash "$BIN/statusline-toggle.sh" all on >/dev/null 2>&1
 
-# the per-model weekly window (experimental). It comes from usage_cache.json,
+# the per-model weekly window (experimental). It comes from account_usage_cache.json,
 # never from the payload, and it is omitted rather than zeroed.
 cfg true true true false simple
 case "$(run)" in *fable*) bad "fable without a cache" "the row rendered with no usage cache" ;; *) ok "no usage cache means no per-model row" ;; esac
-printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$week" > "$ST/usage_cache.json"
+printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$week" > "$ST/account_usage_cache.json"
 case "$(run)" in *"fable: 61%"*) ok "a live per-model window renders" ;; *) bad "fable live" "$(run)" ;; esac
-printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$((now - 60))" > "$ST/usage_cache.json"
+printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$((now - 60))" > "$ST/account_usage_cache.json"
 case "$(run)" in *fable*) bad "fable expired" "an expired window still rendered" ;; *) ok "an expired per-model window is dropped" ;; esac
-printf '{"updated_at":%s,"models":{}}\n' "$now" > "$ST/usage_cache.json"
+printf '{"updated_at":%s,"models":{}}\n' "$now" > "$ST/account_usage_cache.json"
 case "$(run)" in *fable*) bad "fable absent" "an account with no such window rendered one" ;; *) ok "an account with no per-model window renders nothing, not 0%" ;; esac
 cfg true false true false simple
-printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$week" > "$ST/usage_cache.json"
+printf '{"updated_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}}}\n' "$now" "$week" > "$ST/account_usage_cache.json"
 case "$(run)" in *fable*) bad "fable with session off" "the row survived hiding the session part" ;; *) ok "hiding the session part hides the per-model row too" ;; esac
-rm -f "$ST/usage_cache.json"
+rm -f "$ST/account_usage_cache.json"
 
 # the accent color (experimental). Read raw, since the whole assertion is
 # about the escape sequences.

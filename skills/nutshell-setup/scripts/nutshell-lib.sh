@@ -55,18 +55,28 @@ NUT_CONFIG="$NUT_DIR/config.json"
 NUT_COST_CACHE="$NUT_STATE_DIR/cost_cache.json"
 NUT_COST_LEDGER="$NUT_STATE_DIR/cost_ledger.json"
 NUT_COST_BASELINE="$NUT_STATE_DIR/cost_baseline.json"
-NUT_RATE_CACHE="$NUT_STATE_DIR/rate_cache.json"
+# The freshest five_hour and seven_day reading from any tab, shared by all
+# of them. Written only by statusline.sh.
+NUT_SHARED_RATE_LIMIT_CACHE="$NUT_STATE_DIR/shared_rate_limit_cache.json"
 NUT_AUTH_CACHE="$NUT_STATE_DIR/auth_cache.json"
-# Per-model weekly windows from the account usage endpoint. Written only by
-# usage_cache_refresh.sh, the one job in this plugin that touches the network.
-NUT_USAGE_CACHE="$NUT_STATE_DIR/usage_cache.json"
+# The account usage endpoint reading: five_hour, seven_day and the per-model
+# weekly windows. Written only by account_usage_cache_refresh.sh, the one job
+# in this plugin that touches the network.
+NUT_ACCOUNT_USAGE_CACHE="$NUT_STATE_DIR/account_usage_cache.json"
 # Extra per-source ledgers written by other tools: ${NUT_EXTRA_LEDGER_PREFIX}<source>.json
 NUT_EXTRA_LEDGER_PREFIX="$NUT_STATE_DIR/ledger_"
 
 NUT_SYNC_LOCK="$NUT_LOCK_DIR/sync.lock"
 NUT_COST_LOCK="$NUT_LOCK_DIR/cost_cache.lock"
 NUT_AUTH_LOCK="$NUT_LOCK_DIR/auth_cache.lock"
-NUT_USAGE_LOCK="$NUT_LOCK_DIR/usage_cache.lock"
+NUT_ACCOUNT_USAGE_LOCK="$NUT_LOCK_DIR/account_usage_cache.lock"
+
+# The names the two caches and their lock had through 0.3.6. sync.sh renames
+# the files once the current scripts are installed (nut_migrate_renamed_state),
+# and uninstall --purge sweeps these too, for an install that never re-synced.
+NUT_OLD_RATE_CACHE="$NUT_STATE_DIR/rate_cache.json"
+NUT_OLD_USAGE_CACHE="$NUT_STATE_DIR/usage_cache.json"
+NUT_OLD_USAGE_LOCK="$NUT_LOCK_DIR/usage_cache.lock"
 
 NUT_SETTINGS="$NUT_CLAUDE_DIR/settings.json"
 NUT_CREDENTIALS="$NUT_CLAUDE_DIR/.credentials.json"
@@ -77,11 +87,11 @@ NUT_MODEL_CATALOG_DIR="$NUT_CLAUDE_DIR/cache/model-catalog"
 
 # The scripts installed into bin/, in install order. This library goes
 # first so no script ever lands before the file it sources.
-NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh auth_cache_refresh.sh usage_cache_refresh.sh"
+NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh auth_cache_refresh.sh account_usage_cache_refresh.sh"
 # Scripts earlier versions installed into bin/ and this one no longer does.
 # sync.sh deletes them once every current script is in place, and uninstall
 # deletes them too, or its rmdir of bin/ fails on an upgraded install.
-NUT_RETIRED_BIN_FILES="cost_cache_refresh.sh"
+NUT_RETIRED_BIN_FILES="cost_cache_refresh.sh usage_cache_refresh.sh"
 
 # The settings.json registration. This is the only copy: sync.sh, the setup
 # skill (which runs sync.sh) and statusline-toggle.sh all register from it,
@@ -122,7 +132,8 @@ NUT_STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/nutshell/bin/s
 # that was never migrated.
 # ---------------------------------------------------------------------------
 NUT_OLD_CONFIG="$NUT_CLAUDE_DIR/statusline.config.json"
-# State files: the new name is the old one without its leading dot.
+# State files: the new name is the old one without its leading dot. The
+# rate cache then gets its current name from nut_migrate_renamed_state.
 NUT_OLD_STATE_FILES=".cost_cache.json .cost_ledger.json .cost_baseline.json .rate_cache.json .auth_cache.json"
 NUT_OLD_LOCK_FILES=".cost_cache.lock .auth_cache.json.lock .statusline-sync.lock"
 NUT_OLD_SCRIPTS="statusline.sh statusline-toggle.sh cost_cache_refresh.sh"
@@ -195,6 +206,10 @@ nut_tmp_for() {
 # catch half-written. Returns 1 with the temp file removed on any failure.
 nut_write_atomic() {
   local content="$1" target="$2" tmp
+  # An empty target would put the temp file in the working directory. It can
+  # only happen when a script from one version sources the library of
+  # another that renamed the path variable (a sync swapping files mid-render).
+  [ -n "$target" ] || return 1
   nut_tmp_for "$target"; tmp="$NUT_TMP"
   if printf '%s' "$content" > "$tmp" 2>/dev/null && mv "$tmp" "$target" 2>/dev/null; then
     return 0
@@ -211,6 +226,7 @@ nut_write_atomic() {
 # can tell "nothing to write" from "the write did not land".
 nut_write_json_object() {
   local content="$1" target="$2" tmp
+  [ -n "$target" ] || return 1
   nut_tmp_for "$target"; tmp="$NUT_TMP"
   # A temp file that cannot even be created is the old failed-mktemp case,
   # and the caller has to hear about it.
@@ -314,7 +330,7 @@ NUT_LOCK_STALE_AUTH=60
 NUT_LOCK_STALE_COST=120
 # One HTTP call under an 8s curl limit inside a 15s nut_timeout, so a holder
 # still on its feet after 60s is a dead one.
-NUT_LOCK_STALE_USAGE=60
+NUT_LOCK_STALE_ACCOUNT_USAGE=60
 
 # Try to take lock $1, whose holder is stale after $2 seconds. Returns 0
 # with the lock held and an EXIT trap set to release it, 1 when someone
@@ -653,4 +669,19 @@ nut_migrate_legacy_layout() {
   for f in $NUT_OLD_LOCK_FILES; do
     rm -f "$NUT_CLAUDE_DIR/$f" 2>/dev/null
   done
+}
+
+# Give the two caches the names they took after 0.3.6 (rate_cache.json and
+# usage_cache.json before). Run by sync.sh only once every current script is
+# in bin/: until then the old scripts are the working install and still read
+# the old names. An old file left beside a new one (a render already in
+# flight when the scripts were swapped) is deleted rather than merged. Both
+# are caches that the next render or probe rewrites, so nothing is lost.
+# The old lock goes too: nothing takes it any more, and an old refresher
+# that still holds it releases it with an rm of its own.
+nut_migrate_renamed_state() {
+  nut_migrate_one "$NUT_OLD_RATE_CACHE" "$NUT_SHARED_RATE_LIMIT_CACHE"
+  nut_migrate_one "$NUT_OLD_USAGE_CACHE" "$NUT_ACCOUNT_USAGE_CACHE"
+  rm -f "$NUT_OLD_RATE_CACHE" "$NUT_OLD_USAGE_CACHE" \
+        "$NUT_OLD_USAGE_LOCK" "$NUT_OLD_USAGE_LOCK.held" 2>/dev/null
 }
