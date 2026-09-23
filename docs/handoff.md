@@ -19,6 +19,20 @@ those tests happen. Delete or rewrite it once they do.
 > `usage_cache_refresh.sh` is now `account_usage_cache_refresh.sh` (lock
 > `locks/account_usage_cache.lock`). The sync renames an existing install. The
 > names below were updated; nothing to re-verify beyond the items already listed.
+>
+> Pending for the next release (found 2026-09-24, deliberately left until
+> then, not bugs in shipped code):
+> - README Uninstall: "keeps config.json, the rate-limit cache, the auth
+>   cache" leaves out the account usage cache, and "removes the three lock
+>   files" is out of date (every lock goes, bare and `.held`, 0.3.6 name too).
+> - `statusline-toggle.sh` non-purge uninstall message says "rate cache" and
+>   leaves out the account usage cache. Same fix as the README line.
+> - A non-purge uninstall removes the pre-0.3.1 `~/.claude/.statusline-sync.lock`
+>   but leaves `.cost_cache.lock` and `.auth_cache.json.lock` for `--purge`,
+>   against its own "locks go in both paths" rule. Add a test with the fix.
+> - Release notes for `gh release create`: payload-only cost on the session
+>   row, three-row detail, reset skill and `Stop` hook removed, ccusage no
+>   longer a dependency, advisor names from the model catalog, caches renamed.
 
 ## What shipped in 0.3.4
 
