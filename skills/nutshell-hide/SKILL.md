@@ -1,6 +1,6 @@
 ---
 name: nutshell-hide
-description: Turn off one line of the nutshell statusline (session, cost or workspace) or all three, keeping the statusline itself registered. The model line cannot be hidden. Use when the user asks to hide or blank a statusline section. Not for handing the row back to Claude Code, which is the nutshell-inactive skill, and not for emoji labels, which is the nutshell-emoji skill.
+description: Turn off one part of the nutshell statusline (session, cost or workspace) or all three, keeping the statusline itself registered. The model line cannot be hidden. Use when the user asks to hide or blank a statusline section. Not for handing the row back to Claude Code, which is the nutshell-inactive skill, and not for emoji labels, which is the nutshell-emoji skill.
 argument-hint: "[all|session|cost|workspace]"
 ---
 

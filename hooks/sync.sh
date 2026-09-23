@@ -56,6 +56,11 @@ if [ "$all_installed" -eq 1 ]; then
   for f in $NUT_OLD_SCRIPTS; do
     rm -f "$NUT_CLAUDE_DIR/$f" 2>/dev/null
   done
+  # Scripts an earlier version put in bin/ that nothing runs any more. Same
+  # rule as above: only once the current set is complete.
+  for f in $NUT_RETIRED_BIN_FILES; do
+    rm -f "$NUT_BIN_DIR/$f" 2>/dev/null
+  done
 fi
 
 # Register the statusLine command, unless the user turned the statusline

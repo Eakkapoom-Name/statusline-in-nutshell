@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 # statusline.sh: the Claude Code statusLine command.
 #
-# Reads the statusLine JSON payload from stdin and prints up to four lines:
+# Reads the statusLine JSON payload from stdin and prints up to three lines:
 #   1  model / effort / advisor / context bar   (always shown)
-#   2  rate limits: current 5-hour window / current week / per-model week
-#   3  cost: current session / today / weekly / monthly / all-time
-#   4  workspace: directory / repo / branch
-# A line is dropped when it has nothing to say, and lines 2-4 can each be
-# hidden through config.json (statusline-toggle.sh). Every optional field
-# is omitted gracefully, never rendered as a blank label.
+#   2  rate limits: current 5-hour window / current week / per-model week,
+#      then the current session's cost
+#   3  workspace: directory / repo / branch
+# A line is dropped when it has nothing to say, and every part but the
+# model can be hidden through config.json (statusline-toggle.sh). Every
+# optional field is omitted gracefully, never rendered as a blank label.
 #
 # Freshness, the one thing to understand about this script: Claude Code
 # re-runs it on a timer (refreshInterval: every second, every fifth on
-# Windows, see nutshell-lib.sh) but does NOT recompute the payload. Advisor and cost are read from disk, so the timer alone keeps
-# them current. rate_limits is per-session payload state that Claude Code
-# refreshes only from that session's own API responses, so an idle tab
-# would freeze at its last reading; the shared rate cache below fixes that.
-# Anything slow (ccusage, `claude auth status`) runs in a background script
-# and lands in a cache this script only reads.
+# Windows, see nutshell-lib.sh) but does NOT recompute the payload. The
+# advisor is read from disk, so the timer alone keeps it current. Cost is
+# the payload's own cost.total_cost_usd and nothing else, so it moves with
+# the session's responses. rate_limits is per-session payload state that
+# Claude Code refreshes only from that session's own API responses, so an
+# idle tab would freeze at its last reading; the shared rate cache below
+# fixes that. Anything slow (`claude auth status`, the usage endpoint) runs
+# in a background script and lands in a cache this script only reads.
 #
 # FORK COUNT IS THE BUDGET, and it is a correctness constraint, not a
 # nicety. Claude Code cancels an in-flight statusline whenever a new
@@ -27,8 +29,8 @@
 # all. Forking is ~1ms on Linux and macOS but 150-210ms under the Cygwin
 # bash that Git for Windows ships, where an earlier version of this script
 # spent ~4s per render across ~50 forks and completed 0 renders out of 100.
-# So: ONE jq call assembles every field from stdin and all five state
-# files, rendering uses `printf -v` rather than `$(...)` (a command
+# So: ONE jq call assembles every field from stdin and all six state,
+# settings and catalog files, rendering uses `printf -v` rather than `$(...)` (a command
 # substitution is a fork), and the remaining external commands are counted
 # and justified where they appear.
 
@@ -36,7 +38,6 @@ case "${BASH_SOURCE[0]}" in */*) NUT_LIB_DIR="${BASH_SOURCE[0]%/*}" ;; *) NUT_LI
 . "$NUT_LIB_DIR/nutshell-lib.sh" 2>/dev/null || exit 0
 nut_ensure_dirs
 
-COST_CACHE_MAX_AGE=300
 AUTH_CACHE_MAX_AGE=300
 # A weekly window moves slowly and the probe is a network call, so this is
 # the longest gate here rather than the shortest.
@@ -109,21 +110,6 @@ effort_color() {
   esac
 }
 
-# Alias -> display name, into ADVISOR_NAME. settings.json only stores the
-# bare alias and no runtime lookup exists for the resolved name, so this
-# WILL drift on new model releases (opus was "Opus 4.8", then "Opus 5" as of
-# 2026-07, now "Opus 5.5" as of 2026-09; fable was "Fable 5", now "Fable 5.1"
-# as of 2026-09, Claude Code 2.1.255+).
-advisor_display_name() {
-  case "$1" in
-    fable)  ADVISOR_NAME='Fable 5.1' ;;
-    sonnet) ADVISOR_NAME='Sonnet 5' ;;
-    opus)   ADVISOR_NAME='Opus 5.5' ;;
-    haiku)  ADVISOR_NAME='Haiku 4.5' ;;
-    *)      ADVISOR_NAME="$1" ;;
-  esac
-}
-
 # Field label into LBL: word ("model:") or icon ("💡") per emoji_mode.
 #
 # Every icon must be a SINGLE codepoint whose East Asian Width is W (wide).
@@ -141,10 +127,6 @@ label() {
       advisor)      LBL='🎓' ;;
       context)      LBL='⏳' ;;
       cost_session) LBL='🪙' ;;
-      cost_today)   LBL='⛅' ;;
-      cost_week)    LBL='📅' ;;
-      cost_month)   LBL='🧾' ;;
-      cost_alltime) LBL='💳' ;;
       rate_five)    LBL='🕐' ;;
       rate_week)    LBL='🔄' ;;
       rate_model)   LBL='⚡' ;;
@@ -157,11 +139,10 @@ label() {
       model)        LBL='model:' ;;
       advisor)      LBL='advisor:' ;;
       context)      LBL='context:' ;;
-      cost_session) LBL='current session:' ;;
-      cost_today)   LBL='today:' ;;
-      cost_week)    LBL='weekly:' ;;
-      cost_month)   LBL='monthly:' ;;
-      cost_alltime) LBL='all-time:' ;;
+      # Not "current session:" any more: the cost now shares a row with
+      # "5 hours session:" and "weekly session:", where a third "session"
+      # would read as a third rate window.
+      cost_session) LBL='cost:' ;;
       rate_five)    LBL='5 hours session:' ;;
       rate_week)    LBL='weekly session:' ;;
       rate_model)   LBL='weekly fable:' ;;
@@ -425,8 +406,8 @@ as_epoch() {
 # ---------------------------------------------------------------------------
 # Input: one jq call for everything
 #
-# The payload from stdin plus all five files (config.json, settings.json,
-# and the cost / auth / rate caches) are parsed, and the rate-window merge
+# The payload from stdin plus all six files (config.json, settings.json,
+# the auth / rate / usage caches and the model catalog) are parsed, and the rate-window merge
 # is computed, by a single jq invocation. This used to be five separate jq
 # calls plus a sixth for the merge; on Windows that alone was ~2s.
 #
@@ -450,10 +431,10 @@ def obj($s): (try ($s | fromjson) catch null) as $v
 obj($praw)    as $pl  |
 obj($cfgraw)  as $cfg |
 obj($setraw)  as $set |
-obj($costraw) as $cc  |
 obj($authraw) as $au  |
 obj($rateraw) as $rc  |
 obj($usageraw) as $us |
+obj($catraw)  as $mc  |
 
 # Part visibility. Raw tostring values, not `.key // true`: jq treats false
 # as empty, so `//` would un-hide a hidden part. A missing key reads
@@ -499,8 +480,46 @@ obj($usageraw) as $us |
 ($pl.workspace.repo.name // "")                as $rn |
 (($pl.rate_limits // {}) | if type == "object" then . else {} end) as $p |
 (($p | length) > 0) as $rate_has |
-($set.advisorModel // "") as $adv |
 ($pl.version // "") as $ccver |
+
+# The advisor display name. settings.json holds what /advisor wrote: an
+# alias ("fable", "opus", "sonnet") from the picker, or whatever was typed,
+# which can be a full model id. Nothing here is a hardcoded list of names,
+# so a new model or a new family needs no patch:
+#   1 empty or "off": no advisor. (/advisor off deletes the key, so "off"
+#     only arrives hand-typed.)
+#   2 the alias with its first letter capitalised, "fable" -> "Fable", is
+#     the answer whenever nothing below finds a better one.
+#   3 the Claude Code model catalog (newest file, picked in read_all): a full
+#     id matches the id of an entry, ignoring a [1m] suffix and a date suffix;
+#     an alias matches the short_name of an entry ("Fable"), and of those the
+#     highest version wins, since an alias always resolves to the newest
+#     model of its family. The version is read from the numeric parts of the id
+#     ("claude-fable-5-1" -> [5,1]), never from the name, and jq compares
+#     arrays element by element, so [5,1] beats [5]. A date suffix is
+#     dropped by length, so "claude-haiku-4-5-20251001" reads [4,5].
+# No regex anywhere: split("-") is a plain string split, and a jq built
+# without oniguruma would reject test() or sub() and blank the whole row.
+def id_parts($i): $i | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
+  | map(select(length <= 3 and ((try tonumber catch null) != null)) | tonumber);
+def id_base($i): $i | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
+  | map(select((length == 8 and ((try tonumber catch null) != null)) | not)) | join("-");
+(($set.advisorModel // "") | tostring) as $adv_raw |
+((($mc.catalog.config.models? | arrays) // [])
+  | map(select((.id | type) == "string" and (.name | type) == "string"))) as $mc_models |
+(if $adv_raw == "" or ($adv_raw | ascii_downcase) == "off" then ""
+ else
+   # Parenthesised: `as` binds tighter than `+`, so without them only the
+   # tail would be bound and the capital letter would sit outside the pipe.
+   (($adv_raw[0:1] | ascii_upcase) + $adv_raw[1:]) as $adv_cap |
+   id_base($adv_raw) as $adv_base |
+   ([$mc_models[] | select(id_base(.id) == $adv_base)] | first // null) as $adv_exact |
+   ([$mc_models[] | select(((.short_name // "") | tostring | ascii_downcase) == ($adv_raw | ascii_downcase))]
+     | max_by(id_parts(.id))) as $adv_family |
+   (if $adv_exact != null then $adv_exact.name
+    elif $adv_family != null then $adv_family.name
+    else $adv_cap end)
+ end) as $adv |
 
 # Per-model weekly window, from the cache usage_cache_refresh.sh writes.
 # Keyed by the display name the server itself sends; "Fable" is the only one rendered,
@@ -547,12 +566,6 @@ def is_tie($n):
 fmt_tok($ctxut) as $used_fmt |
 fmt_tok($ctxtt) as $total_fmt |
 (is_tie($ctxut) or is_tie($ctxtt)) as $tok_tie |
-
-($cc.today_cost // "")    as $c_today |
-($cc.weekly_cost // "")   as $c_week |
-($cc.monthly_cost // "")  as $c_month |
-($cc.all_time_cost // "") as $c_all |
-($cc.updated_at // 0)     as $c_upd |
 
 # Auth verdict, per session: "" = unknown (no cache entry, or no
 # subscription_type key), "none" = metered billing, anything else = the
@@ -658,7 +671,6 @@ def show($w; $v):
 [ $model, $effort, $ctxu, $ctxut, $ctxtt, $cost, $sid, $ws, $ro, $rn, $rate_has,
   $adv, $used_fmt, $total_fmt, $tok_tie,
   $cfg_cost, $cfg_session, $cfg_workspace, $cfg_emoji, $cfg_disabled,
-  $c_today, $c_week, $c_month, $c_all, $c_upd,
   $plan, $a_upd, $a_sig,
   (if $showrate then show("five_hour"; $f) else "" end),
   (if $showrate then ($f.used_percentage // "") else "" end),
@@ -730,19 +742,30 @@ read_all() {
                 --arg praw "$payload" --arg sep $'\x1f' )
   nut_jq_file_arg cfgraw  "$NUT_CONFIG"
   nut_jq_file_arg setraw  "$NUT_SETTINGS"
-  nut_jq_file_arg costraw "$NUT_COST_CACHE"
   nut_jq_file_arg authraw "$NUT_AUTH_CACHE"
   nut_jq_file_arg rateraw "$NUT_RATE_CACHE"
   nut_jq_file_arg usageraw "$NUT_USAGE_CACHE"
+  # The newest model catalog, by mtime. Claude Code keeps one file per
+  # account and never prunes the old ones, and an old one can lack the model
+  # the advisor resolves to today (a catalog from before Opus 5.5 existed).
+  # `-nt` is a test builtin and the glob is expanded by bash, so choosing it
+  # forks nothing. A failed fetch leaves a *.headless-failed.json beside the
+  # real file, and it is newer, so it is skipped by name.
+  local cat_file="" cand
+  for cand in "$NUT_MODEL_CATALOG_DIR"/*.json; do
+    case "$cand" in *.headless-failed.json) continue ;; esac
+    [ -f "$cand" ] || continue
+    if [ -z "$cat_file" ] || [ "$cand" -nt "$cat_file" ]; then cat_file="$cand"; fi
+  done
+  nut_jq_file_arg catraw "$cat_file"
 
   # Defaults for the case where jq is missing or errors: every part shown,
   # emoji off, active. The statusline degrades to what the payload alone
   # can say rather than going blank.
   model=""; effort=""; ctx_used=""; ctx_used_tokens=""; ctx_total_tokens=""
   cost=""; session_id=""; ws_dir=""; repo_owner=""; repo_name=""; rate_has=false
-  advisor_raw=""; used_fmt_jq=""; total_fmt_jq=""; tok_tie=false
+  advisor=""; used_fmt_jq=""; total_fmt_jq=""; tok_tie=false
   cfg_cost=""; cfg_session=""; cfg_workspace=""; cfg_emoji=""; cfg_disabled=""
-  today_cost=""; weekly_cost=""; monthly_cost=""; all_time_cost=""; cost_updated_at=0
   auth_plan=""; auth_updated_at=0; auth_sig=""
   five_show=""; five_pct=""; five_reset=""
   week_show=""; week_pct=""; week_reset=""
@@ -752,9 +775,8 @@ read_all() {
 
   IFS=$'\x1f' read -r model effort ctx_used ctx_used_tokens ctx_total_tokens \
       cost session_id ws_dir repo_owner repo_name rate_has \
-      advisor_raw used_fmt_jq total_fmt_jq tok_tie \
+      advisor used_fmt_jq total_fmt_jq tok_tie \
       cfg_cost cfg_session cfg_workspace cfg_emoji cfg_disabled \
-      today_cost weekly_cost monthly_cost all_time_cost cost_updated_at \
       auth_plan auth_updated_at auth_sig \
       five_show five_pct five_reset week_show week_pct week_reset \
       rate_new rate_changed \
@@ -787,44 +809,22 @@ read_all() {
   # EFFORT_MAX is deliberately not touched: it holds CLAUDE_ORANGE and stays
   # there whatever the accent is.
   [ "$cfg_color" = blue ] && ORANGE="$BLUE"
-  # Anything but the exact word "simple" renders the four lines, so a
+  # Anything but the exact word "simple" renders the detail lines, so a
   # hand-edited or truncated value can never produce a row nobody expects.
   [ "$cfg_mode" = "simple" ] || cfg_mode="detail"
 
-  advisor=""
-  if [ -n "$advisor_raw" ]; then
-    advisor_display_name "$advisor_raw"
-    advisor="$ADVISOR_NAME"
-  fi
 }
 
 # ---------------------------------------------------------------------------
 # Background work: never on the render path
 # ---------------------------------------------------------------------------
 
-# Each cost window is recomputed from the real calendar on every refresh,
-# so they roll over on their own (today at midnight, weekly on Sunday,
-# monthly on the 1st). Spawns the refresher when the cache is older than
-# COST_CACHE_MAX_AGE, missing, unparseable, or stamped in the future (clock
-# skew would otherwise make the age negative, always below the threshold,
-# and the stale numbers would stay until the wall clock caught up). The
-# ccusage check mirrors the refresher's own guard: without it every render
-# would fork a process that can only exit.
-spawn_cost_refresh_if_stale() {
-  local cache_age
-  as_epoch "$cost_updated_at"
-  cache_age=$(( NOW - AS_EPOCH ))
-  [ "$cache_age" -lt 0 ] && cache_age="$COST_CACHE_MAX_AGE"
-  if [ "$show_cost" = true ] && [ "$cache_age" -ge "$COST_CACHE_MAX_AGE" ] \
-     && command -v ccusage >/dev/null 2>&1; then
-    nut_spawn bash "$NUT_BIN_DIR/cost_cache_refresh.sh"
-  fi
-}
-
-# Re-probe the auth verdict in the background, same shape as the cost
-# refresher: only when the session row is shown, only when `claude` is on
-# PATH and the probe script is installed (either missing leaves the verdict
-# unknown, which fails open, rather than forking a doomed job every render).
+# Re-probe the auth verdict in the background: only when the session row is
+# shown, only when `claude` is on PATH and the probe script is installed
+# (either missing leaves the verdict unknown, which fails open, rather than
+# forking a doomed job every render). An age read from a cache that is
+# missing, unparseable, or stamped in the future counts as stale: clock skew
+# would otherwise make the age negative, always below the threshold.
 #
 # Two things beside age make a verdict stale, and both force a re-probe
 # rather than waiting out AUTH_CACHE_MAX_AGE:
@@ -856,7 +856,7 @@ spawn_auth_probe_if_stale() {
 }
 
 # Refresh the per-model weekly window in the background. The gate is the
-# same shape as the other two, with two extra conditions that are the whole
+# same shape as the auth probe's, with two extra conditions that are the whole
 # reason this stays cheap and quiet:
 #  - the session part has to be shown, since that is what this rides on
 #  - the verdict must not be "none": a metered session has no claude.ai plan
@@ -942,47 +942,39 @@ build_line1() {
   line1+=("$seg")
 }
 
+# The session row: the rate windows, then the current session's cost. The
+# two parts toggle independently, so either half can be the whole row.
+#
+# A window whose show flag is not exactly "false" renders (the jq call
+# failed), so a broken cache can hide nothing. An omitted window never
+# lands in line2; with both omitted and no cost to show, the row is dropped
+# by the same empty-array check as every row.
 build_line2() {
   line2=()
-  if [ -n "$cost" ]; then
+  if [ "$show_rate" = true ]; then
+    [ -z "$five_pct" ] && five_pct=0
+    [ -z "$week_pct" ] && week_pct=0
+    if [ "$five_show" != false ]; then
+      render_rate_window rate_five "$five_pct" "$five_reset"
+      line2+=("$SEG")
+    fi
+    if [ "$week_show" != false ]; then
+      render_rate_window rate_week "$week_pct" "$week_reset"
+      line2+=("$SEG")
+    fi
+    # The per-model window is additive: it renders only when the probe has
+    # actually seen one, and its absence changes nothing else on the row.
+    if [ -n "$fable_pct" ]; then
+      render_rate_window rate_model "$fable_pct" "$fable_reset"
+      line2+=("$SEG")
+    fi
+  fi
+  # Last on the row, after the per-model window. This is the payload's own
+  # cost.total_cost_usd, the only spend figure the plugin shows since the
+  # ccusage windows were retired (see archived/). Absent until the payload
+  # carries one, and then the segment is simply left out.
+  if [ "$show_cost" = true ] && [ -n "$cost" ]; then
     label cost_session; cost_item "$LBL" "$cost"; line2+=("$SEG")
-  fi
-  if [ -n "$today_cost" ]; then
-    label cost_today; cost_item "$LBL" "$today_cost"; line2+=("$SEG")
-  fi
-  if [ -n "$weekly_cost" ]; then
-    label cost_week; cost_item "$LBL" "$weekly_cost"; line2+=("$SEG")
-  fi
-  if [ -n "$monthly_cost" ]; then
-    label cost_month; cost_item "$LBL" "$monthly_cost"; line2+=("$SEG")
-  fi
-  if [ -n "$all_time_cost" ]; then
-    label cost_alltime; cost_item "$LBL" "$all_time_cost"; line2+=("$SEG")
-  fi
-}
-
-# A window whose show flag is not exactly "false" renders (the jq call
-# failed, or the session part is hidden and the flags were never set), so a
-# broken cache can hide nothing. An omitted window never lands in line3;
-# with both omitted the row is dropped by the same empty-array check as
-# every row.
-build_line3() {
-  line3=()
-  [ -z "$five_pct" ] && five_pct=0
-  [ -z "$week_pct" ] && week_pct=0
-  if [ "$five_show" != false ]; then
-    render_rate_window rate_five "$five_pct" "$five_reset"
-    line3+=("$SEG")
-  fi
-  if [ "$week_show" != false ]; then
-    render_rate_window rate_week "$week_pct" "$week_reset"
-    line3+=("$SEG")
-  fi
-  # The per-model window is additive: it renders only when the probe has
-  # actually seen one, and its absence changes nothing else on the row.
-  if [ -n "$fable_pct" ]; then
-    render_rate_window rate_model "$fable_pct" "$fable_reset"
-    line3+=("$SEG")
   fi
 }
 
@@ -990,9 +982,9 @@ build_line3() {
 # independent: a directory outside any repo still shows its path, and a
 # repo with no origin remote still shows its branch (repo.* comes from the
 # origin remote and is absent without one).
-build_line4() {
+build_line3() {
   local ws_display repo_display="" seg
-  line4=()
+  line3=()
   if [ -n "$ws_dir" ]; then
     # $HOME/x -> ~/x via case matching rather than sed, since a home path
     # can contain regex metacharacters.
@@ -1004,7 +996,7 @@ build_line4() {
     label workspace
     color_path "$ws_display"
     printf -v seg '%s %s' "$LBL" "$PATHOUT"
-    line4+=("$seg")
+    line3+=("$seg")
   fi
   if [ -n "$repo_owner" ] && [ -n "$repo_name" ]; then
     repo_display="$repo_owner/$repo_name"
@@ -1015,7 +1007,7 @@ build_line4() {
     label repo
     color_path "$repo_display"
     printf -v seg '%s %s' "$LBL" "$PATHOUT"
-    line4+=("$seg")
+    line3+=("$seg")
   fi
   git_branch "$ws_dir"
   if [ -n "$BRANCH" ]; then
@@ -1024,26 +1016,27 @@ build_line4() {
     # same punctuation as a path separator.
     color_path "$BRANCH"
     printf -v seg '%s %s' "$LBL" "$PATHOUT"
-    line4+=("$seg")
+    line3+=("$seg")
   fi
 }
 
 # ---------------------------------------------------------------------------
 # Simple mode (config "mode": "simple")
 #
-# One row instead of four. The fields are the ten worth keeping: model and
-# effort, advisor, context, the current session's cost, both rate windows
-# with a countdown, and where the session is. Everything cut is cut for
+# One row instead of three. The fields are the ones worth keeping: model and
+# effort, advisor, context, both rate windows and the per-model one with a
+# countdown, the current session's cost, and where the session is. Everything cut is cut for
 # width, and the arithmetic is worth stating: the same ten fields carrying
 # the detail row's word labels measure 216 terminal cells, which is not a
 # status row, it is a paragraph. Dropping the labels and merging workspace
 # with repo brings it to about 112.
 #
 # Labels go, so ORDER carries the meaning and is fixed: model, advisor,
-# context, cost, 5h, 7d, location. Two exceptions keep their word, because
-# without them the field is unreadable rather than merely unlabelled: the
-# advisor (otherwise two identical model names sit side by side) and the
-# context counts. Emoji mode needs neither, an icon is already a label.
+# context, 5h, 7d, fable, cost, location. Three keep a word, because
+# without it the field is unreadable rather than merely unlabelled: the
+# advisor (otherwise two identical model names sit side by side), the
+# context counts, and the cost (a bare "3.46$" says nothing about whose).
+# Emoji mode needs none of them, an icon is already a label.
 # ---------------------------------------------------------------------------
 
 # Time from now until $1 (epoch) as a compact duration into CDSTR: "4d1h"
@@ -1181,11 +1174,6 @@ build_simple() {
     printf -v seg '%s %b%s%b/%b%s%b' "$LBL" "$ORANGE" "$USED_FMT" "$RESET" "$ORANGE" "$TOTAL_FMT" "$RESET"
     simple+=("$seg")
   fi
-  # No cost segment at all in this layout, whatever the cost part says: the
-  # detail row carries the five cost windows, and the one that fits here (the
-  # current session) is the least useful of them. The part toggle still
-  # governs the cost REFRESH, so switching it off in simple mode also stops
-  # the ccusage scan, exactly as it does in detail.
   if [ "$show_rate" = true ]; then
     if [ "$five_show" != false ]; then
       simple_rate rate_five 5h: "$five_pct" "$five_reset"; simple+=("$SEG")
@@ -1196,6 +1184,11 @@ build_simple() {
     if [ -n "$fable_pct" ]; then
       simple_rate rate_model fable: "$fable_pct" "$fable_reset"; simple+=("$SEG")
     fi
+  fi
+  # The same spot as on the detail row: after the rate windows, before the
+  # location. The word label is the detail one, already short.
+  if [ "$show_cost" = true ] && [ -n "$cost" ]; then
+    label cost_session; cost_item "$LBL" "$cost"; simple+=("$SEG")
   fi
   if [ "$show_workspace" = true ]; then
     simple_location
@@ -1209,17 +1202,13 @@ build_simple() {
 print_lines() {
   join_segments "${line1[@]}"
   printf '%s\n' "$JOINED"
-  # The rate windows print above the cost windows. The arrays keep their
-  # build order (line2 is cost, line3 is the rate windows); only the order
-  # they are printed in swapped.
-  if [ "$show_rate" = true ] && [ "${#line3[@]}" -gt 0 ]; then
-    join_segments "${line3[@]}"; printf '%s\n' "$JOINED"
-  fi
-  if [ "$show_cost" = true ] && [ "${#line2[@]}" -gt 0 ]; then
+  # build_line2 already applied the session and cost toggles segment by
+  # segment, so an empty array is the only thing to check here.
+  if [ "${#line2[@]}" -gt 0 ]; then
     join_segments "${line2[@]}"; printf '%s\n' "$JOINED"
   fi
-  if [ "$show_workspace" = true ] && [ "${#line4[@]}" -gt 0 ]; then
-    join_segments "${line4[@]}"; printf '%s\n' "$JOINED"
+  if [ "$show_workspace" = true ] && [ "${#line3[@]}" -gt 0 ]; then
+    join_segments "${line3[@]}"; printf '%s\n' "$JOINED"
   fi
   return 0
 }
@@ -1234,10 +1223,9 @@ main() {
   # to mean no tracking, not just no display: if Claude Code does not act on
   # the deleted statusLine key mid-session, a session that already holds the
   # registration keeps invoking this script, and without the early exit the
-  # cost refresher and the auth probe would keep running for a row the user
-  # asked to hand back. Reading the files above has no side effects.
+  # auth and usage probes would keep running for a row the user asked to
+  # hand back. Reading the files above has no side effects.
   [ "$disabled" = true ] && exit 0
-  spawn_cost_refresh_if_stale
   spawn_auth_probe_if_stale
   spawn_usage_probe_if_stale
   write_rate_cache_if_changed
@@ -1250,7 +1238,6 @@ main() {
   build_line1
   build_line2
   build_line3
-  build_line4
   print_lines
   exit 0
 }

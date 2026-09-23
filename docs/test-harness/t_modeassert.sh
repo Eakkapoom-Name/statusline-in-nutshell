@@ -5,6 +5,16 @@ BIN="$HOME/.claude/nutshell/bin"; ST="$HOME/.claude/nutshell/state"
 mkdir -p "$BIN" "$ST" "$HOME/.claude/nutshell/locks"
 for f in nutshell-lib.sh statusline.sh statusline-toggle.sh; do cp "$REPO/skills/nutshell-setup/scripts/$f" "$BIN/$f"; done
 printf '{"advisorModel":"opus"}\n' > "$HOME/.claude/settings.json"
+# The model catalog Claude Code caches, which is where the advisor name
+# comes from. Two account files, an old one written before Opus 5.5 existed
+# and a current one, plus the marker a failed fetch leaves, which is the
+# newest file of the three and must never be the one read.
+MC="$HOME/.claude/cache/model-catalog"; mkdir -p "$MC"
+mcfile() { printf '{"version":2,"fetchedAt":1,"catalog":{"config":{"models":%s}}}\n' "$2" > "$MC/$1"; }
+mcfile old-cc.json '[{"id":"claude-opus-5","name":"Opus 5","short_name":"Opus"}]'
+mcfile new-cc.json '[{"id":"claude-opus-5","name":"Opus 5","short_name":"Opus"},{"id":"claude-opus-5-5","name":"Opus 5.5","short_name":"Opus"},{"id":"claude-fable-5","name":"Fable 5","short_name":"Fable"},{"id":"claude-fable-5-1","name":"Fable 5.1","short_name":"Fable"},{"id":"claude-haiku-4-5-20251001","name":"Haiku 4.5","short_name":"Haiku"}]'
+printf '{"failedAt":1,"failures":1}\n' > "$MC/new-cc.headless-failed.json"
+touch -t 202601010000 "$MC/old-cc.json"; touch -t 202609010000 "$MC/new-cc.json"; touch -t 202609020000 "$MC/new-cc.headless-failed.json"
 # Both stamps are set half a display unit past the value they assert, not
 # on it. now+17760 is 4h56m to the second, so the row read "4h56m" for one
 # second and "4h55m" ever after, and every exact-string assertion below
@@ -12,7 +22,6 @@ printf '{"advisorModel":"opus"}\n' > "$HOME/.claude/settings.json"
 # which on Windows is every run. +30s on the minute-granular window and
 # +30m on the hour-granular one buys half a unit of slack either way.
 now=$(date +%s); five=$((now+17760+30)); week=$((now+349200+1800))
-printf '{"updated_at":%s,"today_cost":12.34,"weekly_cost":56.78,"monthly_cost":123.45,"all_time_cost":2930.12}\n' "$now" > "$ST/cost_cache.json"
 printf '{"sessions":{"s1":{"subscription_type":"max","updated_at":%s,"sig":1}}}\n' "$now" > "$ST/auth_cache.json"
 printf '{"five_hour":{"used_percentage":42,"resets_at":%s},"seven_day":{"used_percentage":67,"resets_at":%s},"seen":{"plan":"max","windows":["five_hour","seven_day"]},"sessions":{"s1":{"sig":1,"at":%s}},"measured_at":%s}\n' "$five" "$week" "$now" "$now" > "$ST/rate_cache.json"
 D="$HOME/work/statusline-in-nutshell"; mkdir -p "$D/.git" "$D/skills/deep"; printf 'ref: refs/heads/main\n' > "$D/.git/HEAD"
@@ -27,11 +36,26 @@ eq(){ [ "$2" = "$3" ] && ok "$1" || bad "$1" "got [$2] want [$3]"; }
 
 cfg true true true false simple
 eq "simple emits exactly one line" "$(run | wc -l)" "1"
-eq "simple, words, exact string" "$(run)" "Opus 5 (high) | adv: Opus 5.5 | ctx: 51.8k/200.0k | 5h: 42% (4h56m) | 7d: 67% (4d1h) | statusline-in-nutshell@main"
+eq "simple, words, exact string" "$(run)" "Opus 5 (high) | adv: Opus 5.5 | ctx: 51.8k/200.0k | 5h: 42% (4h56m) | 7d: 67% (4d1h) | cost: 3.46$ | statusline-in-nutshell@main"
 cfg true true true true simple
-eq "simple, emoji, exact string" "$(run)" "💡 Opus 5 (high) | 🎓 Opus 5.5 | ⏳ 51.8k/200.0k | 🕐 42% (4h56m) | 🔄 67% (4d1h) | 🌐 statusline-in-nutshell@main"
+eq "simple, emoji, exact string" "$(run)" "💡 Opus 5 (high) | 🎓 Opus 5.5 | ⏳ 51.8k/200.0k | 🕐 42% (4h56m) | 🔄 67% (4d1h) | 🪙 3.46$ | 🌐 statusline-in-nutshell@main"
 cfg true true true false detail
-eq "detail still emits four lines" "$(run | wc -l)" "4"
+eq "detail emits three lines" "$(run | wc -l)" "3"
+# The cost sits at the end of the session row, after the rate windows. The
+# reset clock times are left out of the match, they depend on the timezone.
+case "$(run | sed -n 2p)" in "5 hours session: 42% used ("*") | weekly session: 67% used ("*") | cost: 3.46\$") ok "detail puts the cost last on the session row" ;;
+  *) bad "detail session row" "$(run | sed -n 2p)" ;; esac
+case "$(run)" in *today*|*weekly:*|*monthly*|*all-time*) bad "retired windows" "a ccusage cost window rendered" ;;
+  *) ok "no today, weekly, monthly or all-time window is drawn" ;; esac
+cfg true false true false detail
+eq "session off leaves the cost alone on line 2" "$(run | sed -n 2p)" "cost: 3.46\$"
+cfg false true true false detail
+case "$(run | sed -n 2p)" in *cost*) bad "cost off, detail" "cost still on the session row" ;; *'5 hours session'*) ok "cost off leaves the rate windows alone" ;; *) bad "cost off, detail" "$(run | sed -n 2p)" ;; esac
+cfg false false true false detail
+eq "session and cost both off drop line 2" "$(run | wc -l)" "2"
+nocost=$(printf '%s' "$P" | sed 's/,"cost":{"total_cost_usd":3.4567}//')
+cfg true true true false detail
+case "$(run "$nocost")" in *cost:*) bad "no payload cost" "a cost segment rendered with nothing to show" ;; *) ok "a payload with no cost yet leaves the segment out" ;; esac
 
 cfg true true true false simple
 sub=$(printf '%s' "$P" | sed "s#\"current_dir\":\"$D\"#\"current_dir\":\"$D/skills/deep\"#")
@@ -45,7 +69,7 @@ case "$(run "$nopay")" in *"5h "*|*"7d "*) bad "metered" "rate windows rendered"
 printf '{"sessions":{"s1":{"subscription_type":"max","updated_at":%s,"sig":1}}}\n' "$now" > "$ST/auth_cache.json"
 
 cfg true true true false simple
-case "$(run)" in *'3.46$'*) bad "cost in simple" "spend rendered in the one-line layout" ;; *) ok "simple carries no spend even with the cost part on" ;; esac
+case "$(run)" in *'| 7d: 67% (4d1h) | cost: 3.46$ | '*) ok "simple puts the cost after the rate windows" ;; *) bad "cost in simple" "$(run)" ;; esac
 cfg false true true false simple
 case "$(run)" in *'3.46$'*) bad "cost off" "cost still shown" ;; *) ok "cost off drops the cost" ;; esac
 cfg true false true false simple
@@ -57,9 +81,9 @@ eq "everything off still renders one line" "$(run | wc -l)" "1"
 
 cfg true true true false simple
 printf '{"model":true,"cost":true,"session":true,"workspace":true,"emoji":false,"mode":"sideways","disabled":false}\n' > "$HOME/.claude/nutshell/config.json"
-eq "a bad mode value renders detail" "$(run | wc -l)" "4"
+eq "a bad mode value renders detail" "$(run | wc -l)" "3"
 printf '{"model":true,"cost":true,"session":true,"workspace":true,"emoji":false,"disabled":false}\n' > "$HOME/.claude/nutshell/config.json"
-eq "a missing mode key renders detail" "$(run | wc -l)" "4"
+eq "a missing mode key renders detail" "$(run | wc -l)" "3"
 
 T status >/dev/null
 eq "ensure_config writes the default" "$(jq -r .mode "$HOME/.claude/nutshell/config.json")" "detail"
@@ -103,7 +127,7 @@ case "$(f2run)" in *'0.77$'*) bad "first install cost" "cost rendered" ;; *) ok 
 HOME="$F2" bash "$F2/.claude/nutshell/bin/statusline-toggle.sh" status >/dev/null
 eq "the config it writes says cost false" "$(jq -r .cost "$F2/.claude/nutshell/config.json")" "false"
 HOME="$F2" bash "$F2/.claude/nutshell/bin/statusline-toggle.sh" cost on >/dev/null
-case "$(f2run)" in *'0.77$'*) bad "cost on in simple" "spend rendered in simple" ;; *) ok "showing the cost changes nothing in simple" ;; esac
+case "$(f2run)" in *'0.77$'*) ok "showing the cost draws it in simple" ;; *) bad "cost on in simple" "still hidden" ;; esac
 HOME="$F2" bash "$F2/.claude/nutshell/bin/statusline-toggle.sh" mode detail >/dev/null
 case "$(f2run)" in *'0.77$'*) ok "showing it once brings the cost back in detail" ;; *) bad "cost on" "still hidden" ;; esac
 printf '{"model":true,"session":true,"workspace":true,"emoji":false,"disabled":false}\n' > "$F2/.claude/nutshell/config.json"
@@ -114,7 +138,7 @@ cfg true true true false simple
 bash "$BIN/statusline-toggle.sh" cost off >/dev/null 2>&1
 case "$(run)" in *'3.46$'*) bad "cost off via verb" "cost still shown" ;; *) ok "cost off through the toggle verb drops it in simple" ;; esac
 bash "$BIN/statusline-toggle.sh" cost on >/dev/null 2>&1
-case "$(run)" in *'3.46$'*) bad "cost on via verb" "spend rendered in simple" ;; *) ok "cost on through the toggle verb still draws no spend in simple" ;; esac
+case "$(run)" in *'3.46$'*) ok "cost on through the toggle verb draws it in simple" ;; *) bad "cost on via verb" "still hidden" ;; esac
 cfg true true true false detail
 case "$(run)" in *'3.46$'*) ok "the same cost key draws the spend in detail" ;; *) bad "cost on in detail" "still hidden" ;; esac
 cfg true true true false simple
@@ -161,6 +185,28 @@ eq "bare color toggles" "$(jq -r .color "$HOME/.claude/nutshell/config.json")" "
 T color sideways >/dev/null 2>&1; eq "a bad color argument exits 1" "$?" "1"
 eq "and leaves the saved color alone" "$(jq -r .color "$HOME/.claude/nutshell/config.json")" "blue"
 
+# The advisor name, resolved from the catalog above with no hardcoded names.
+adv() { printf '{"advisorModel":%s}\n' "$1" > "$HOME/.claude/settings.json"; run | sed -n 's/.*adv: \([^|]*\) |.*/\1/p'; }
+cfg true true true false simple
+eq "an alias picks the newest version of its family" "$(adv '"fable"')" "Fable 5.1"
+eq "the newest catalog file wins over an older one" "$(adv '"opus"')" "Opus 5.5"
+eq "the alias match ignores case" "$(adv '"Fable"')" "Fable 5.1"
+eq "a full id matches exactly, not the newest" "$(adv '"claude-opus-5"')" "Opus 5"
+eq "a full id matches past a date suffix" "$(adv '"claude-haiku-4-5"')" "Haiku 4.5"
+eq "a full id matches past a [1m] suffix" "$(adv '"claude-fable-5[1m]"')" "Fable 5"
+eq "a family the catalog lacks is capitalised" "$(adv '"nova"')" "Nova"
+printf '{"advisorModel":"off"}\n' > "$HOME/.claude/settings.json"
+case "$(run)" in *adv:*) bad "advisor off" "an advisor segment rendered" ;; *) ok "off draws no advisor" ;; esac
+printf '{}\n' > "$HOME/.claude/settings.json"
+case "$(run)" in *adv:*) bad "advisor unset" "an advisor segment rendered" ;; *) ok "no advisorModel draws no advisor" ;; esac
+mv "$MC" "$MC.off"
+eq "without a catalog the alias is capitalised" "$(adv '"fable"')" "Fable"
+mkdir -p "$MC"; printf 'not json\n' > "$MC/broken-cc.json"
+eq "an unreadable catalog falls back the same way" "$(adv '"opus"')" "Opus"
+case "$(run)" in *ctx:*) ok "an unreadable catalog leaves the rest of the row alone" ;; *) bad "broken catalog" "$(run)" ;; esac
+rm -rf "$MC"; mv "$MC.off" "$MC"
+printf '{"advisorModel":"opus"}\n' > "$HOME/.claude/settings.json"
+
 # A Windows current_dir. Claude Code hands the native path through on that
 # platform, and its separator is the backslash, so the rendered row carries
 # backslashes as DATA. Every one of them is an escape to printf's %b, and
@@ -177,7 +223,7 @@ winp=$(jq -nc --arg d "$WINDIR" '{session_id:"s1",model:{display_name:"Opus 5"},
 winrun() { printf '%s' "$winp" | bash "$BIN/statusline.sh" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'; }
 winerr() { printf '%s' "$winp" | bash "$BIN/statusline.sh" 2>&1 >/dev/null; }
 cfg true true true false detail
-eq "a backslash path still renders four lines" "$(winrun | wc -l)" "4"
+eq "a backslash path still renders three lines" "$(winrun | wc -l)" "3"
 case "$(winrun)" in *"$WINDIR"*) ok "the backslash path renders whole and unescaped" ;;
   *) bad "backslash path" "$(winrun | tail -1)" ;; esac
 eq "a backslash path writes nothing to stderr" "$(winerr)" ""

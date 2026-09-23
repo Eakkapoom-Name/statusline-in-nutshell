@@ -35,7 +35,7 @@ for d in "${_dirs[@]}"; do
     [ -x "$f" ] && [ ! -d "$f" ] || continue
     b=${f##*/}
     case "$b" in *.exe|*.EXE|*.cmd|*.CMD|*.bat|*.BAT|*.com|*.COM|*.ps1|*.PS1) n=${b%.*} ;; *) n=$b ;; esac
-    case "$n" in jq|ccusage|claude|curl|brew|npm|bun|pnpm|nix|winget|scoop|choco|sudo|uname|sw_vers) continue ;; esac
+    case "$n" in jq|claude|curl|brew|npm|bun|pnpm|nix|winget|scoop|choco|sudo|uname|sw_vers) continue ;; esac
     [ -e "$MIRROR/$b" ] || ln -s "$f" "$MIRROR/$b" 2>/dev/null
   done
 done
@@ -56,7 +56,7 @@ field() { # kind name column   -> that column of the first matching record
 # --- the doctor on this machine, with everything really installed --------
 out=$(bash "$DOC" --porcelain 2>/dev/null); rc=$?
 case "$out" in *"dep"*jq*) ok "the doctor emits a jq record" ;; *) bad "doctor jq record" "$out" ;; esac
-eq "five dependencies are reported" "$(printf '%s\n' "$out" | grep -c '^dep')" "5"
+eq "four dependencies are reported" "$(printf '%s\n' "$out" | grep -c '^dep')" "4"
 eq "curl is the one optional tier" "$(printf '%s\n' "$out" | field dep curl 3)" "optional"
 eq "exit 0 while every required dependency is present" "$rc" "0"
 
@@ -70,7 +70,6 @@ eq "bash is still found" "$(printf '%s\n' "$out" | field dep bash 4)" "ok"
 # point of the tier: it costs one experimental segment.
 clear_stubs
 stub jq 'exit 0'
-stub ccusage 'echo 20.0.20'
 stub claude 'echo 2.1.267'
 out=$(P bash "$DOC" --porcelain 2>/dev/null); rc=$?
 eq "a missing curl is reported missing" "$(printf '%s\n' "$out" | field dep curl 4)" "missing"
@@ -141,33 +140,37 @@ stub sudo '[ "$1" = -n ] && [ "$2" = true ] && exit 0; shift; "$@"'
 eq "passwordless sudo plans a run" "$(P bash "$INS" --plan --porcelain 2>/dev/null | field plan jq 3)" "run"
 
 # --- apply ---------------------------------------------------------------
+# jq through apt-get with passwordless sudo, on the Ubuntu os-release set
+# above. The ccusage-through-npm version of these cases is in archived/.
 clear_stubs
-LOG="$W/npm.log"; MARK="$W/installed"; rm -f "$LOG" "$MARK"
-stub uname 'case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; *) echo Linux ;; esac'
-stub jq 'exit 0'
+LOG="$W/apt.log"; rm -f "$LOG"
+stub uname 'case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; -r) echo 6.0.0 ;; *) echo Linux ;; esac'
 stub claude 'echo 2.1.267'
-# The install is what puts ccusage on PATH, exactly as the real one does.
-# It cannot be stubbed up front: the doctor decides with `command -v`, which
-# finds a stub whatever its exit status, and would report ccusage present.
-stub npm 'case "$1" in view) echo 20.0.20 ;; install) echo "$*" >> '"$LOG"'; : > '"$MARK"'; printf "#!/usr/bin/env bash\necho 20.0.20\n" > '"$W/stub/ccusage"'; chmod +x '"$W/stub/ccusage"' ;; esac; exit 0'
-eq "a dry run installs nothing" "$(P bash "$INS" --apply ccusage --dry-run --porcelain 2>/dev/null | field result ccusage 3)" "dry-run"
+stub curl 'echo "curl 8.5.0"'
+stub apt-cache 'echo "  Candidate: 1.7.1-3"'
+stub sudo '[ "$1" = -n ] && [ "$2" = true ] && exit 0; [ "$1" = -n ] && shift; "$@"'
+# The install is what puts jq on PATH, exactly as the real one does. It
+# cannot be stubbed up front: the doctor decides with `command -v`, which
+# finds a stub whatever its exit status, and would report jq present.
+stub apt-get 'case "$1" in install) echo "$*" >> '"$LOG"'; printf "#!/usr/bin/env bash\necho jq-1.7.1\n" > '"$W/stub/jq"'; chmod +x '"$W/stub/jq"' ;; esac; exit 0'
+eq "a dry run installs nothing" "$(P bash "$INS" --apply jq --dry-run --porcelain 2>/dev/null | field result jq 3)" "dry-run"
 eq "and left no trace" "$([ -f "$LOG" ] && echo ran || echo clean)" "clean"
-out=$(P bash "$INS" --apply ccusage --porcelain 2>&1); rc=$?
-eq "applying it runs the channel command" "$(cat "$LOG" 2>/dev/null)" "install -g ccusage"
-eq "the result is read back from the doctor" "$(printf '%s\n' "$out" | field result ccusage 4)" "ok"
+out=$(P bash "$INS" --apply jq --porcelain 2>&1); rc=$?
+eq "applying it runs the channel command" "$(cat "$LOG" 2>/dev/null)" "install -y jq"
+eq "the result is read back from the doctor" "$(printf '%s\n' "$out" | field result jq 4)" "ok"
 eq "and the run exits 0" "$rc" "0"
 # A name that was not asked for is never touched.
-rm -f "$LOG" "$MARK"
-P bash "$INS" --apply jq >/dev/null 2>&1
+rm -f "$LOG"
+P bash "$INS" --apply curl >/dev/null 2>&1
 eq "--apply only touches the names it is given" "$([ -f "$LOG" ] && echo ran || echo clean)" "clean"
 
 # --- a failing install ----------------------------------------------------
-rm -f "$LOG" "$MARK" "$W/stub/ccusage"
-stub npm 'case "$1" in view) echo 20.0.20 ;; install) exit 243 ;; esac; exit 0'
-out=$(P bash "$INS" --apply ccusage --porcelain 2>/dev/null); rc=$?
-case "$(printf '%s\n' "$out" | field result ccusage 3)" in
+rm -f "$LOG" "$W/stub/jq"
+stub apt-get 'case "$1" in install) exit 100 ;; esac; exit 0'
+out=$(P bash "$INS" --apply jq --porcelain 2>/dev/null); rc=$?
+case "$(printf '%s\n' "$out" | field result jq 3)" in
   failed*) ok "a failing install is reported failed" ;;
-  *) bad "failed install" "$(printf '%s\n' "$out" | field result ccusage 3)" ;;
+  *) bad "failed install" "$(printf '%s\n' "$out" | field result jq 3)" ;;
 esac
 eq "and the run exits 1" "$rc" "1"
 

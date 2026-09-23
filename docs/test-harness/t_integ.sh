@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
-# Integration: real scripts, fake HOME, stub ccusage/claude.
+# Integration: real scripts, fake HOME, stub claude.
 REPO="$1"; export HOME="$2"; LABEL="$3"
 SRC="$REPO/skills/nutshell-setup/scripts"
 BIN="$HOME/.claude/nutshell/bin"; ST="$HOME/.claude/nutshell/state"; LK="$HOME/.claude/nutshell/locks"
 mkdir -p "$BIN" "$ST" "$LK" "$HOME/stub"
-for f in nutshell-lib.sh statusline.sh statusline-toggle.sh cost_cache_refresh.sh auth_cache_refresh.sh; do
+for f in nutshell-lib.sh statusline.sh statusline-toggle.sh auth_cache_refresh.sh; do
   cp "$SRC/$f" "$BIN/$f"; chmod +x "$BIN/$f"
 done
 printf '{}\n' > "$HOME/.claude/settings.json"
 printf '{"disabled":false,"cost":true,"session":true,"workspace":true,"emoji":false,"model":true}\n' > "$HOME/.claude/nutshell/config.json"
 
 # stubs
-cat > "$HOME/stub/ccusage" <<'S'
-#!/usr/bin/env bash
-printf '%s ccusage %s\n' "$(date +%s)" "$*" >> "$HOME/ccusage.log"
-sleep 2
-printf '{"daily":[{"date":"2026-09-10","totalCost":1.23}]}\n'
-S
 cat > "$HOME/stub/claude" <<'S'
 #!/usr/bin/env bash
 case "$1" in
@@ -26,20 +20,12 @@ case "$1" in
   *) printf 'claude 2.1.266\n' ;;
 esac
 S
-chmod +x "$HOME/stub/ccusage" "$HOME/stub/claude"
+chmod +x "$HOME/stub/claude"
 export PATH="$HOME/stub:$PATH"
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf 'ok   [%s] %s\n' "$LABEL" "$1"; }
 bad() { fail=$((fail+1)); printf 'FAIL [%s] %s: %s\n' "$LABEL" "$1" "$2"; }
-
-# A. cost refresher: 10 concurrent background runs, exactly one scan
-: > "$HOME/ccusage.log"
-i=0; while [ "$i" -lt 10 ]; do bash "$BIN/cost_cache_refresh.sh" >/dev/null 2>&1 & i=$((i+1)); done
-wait
-n=$(grep -c ccusage "$HOME/ccusage.log" 2>/dev/null || echo 0)
-[ "$n" = "1" ] && ok "10 concurrent cost refreshes, 1 ccusage scan" || bad "cost lock" "$n scans, want 1"
-[ ! -f "$LK/cost_cache.lock.held" ] && ok "cost lock released after the run" || bad "cost lock" "held file leaked"
 
 # B. auth refresher: 10 concurrent, exactly one probe
 : > "$HOME/claude.log"
@@ -66,18 +52,6 @@ jq -e '.statusLine.command | test("statusline.sh")' "$HOME/.claude/settings.json
 jq -e 'type == "object"' "$HOME/.claude/settings.json" >/dev/null 2>&1 && ok "settings.json still valid JSON" || bad "sync" "settings corrupted"
 [ ! -f "$LK/sync.lock.held" ] && ok "sync lock released" || bad "sync lock" "held file leaked"
 
-# E. reset-all-time completes and reports done
-out=$(bash "$BIN/statusline-toggle.sh" reset-all-time --yes 2>&1); rc=$?
-printf '%s' "$out" | grep -q "done: all-time cost is now 0" && [ "$rc" -eq 0 ] \
-  && ok "reset-all-time reports done, rc 0" || bad "reset" "rc=$rc out=[$out]"
-
-# F. reset-all-time waits for a live holder instead of skipping
-printf '%s\n' 999999 > "$LK/cost_cache.lock.held"
-( sleep 3; rm -f "$LK/cost_cache.lock.held" ) &
-s=$(date +%s); out=$(bash "$BIN/statusline-toggle.sh" reset-all-time --yes 2>&1); rc=$?; e=$(date +%s)
-wait
-[ "$rc" -eq 0 ] && [ "$((e-s))" -ge 2 ] && ok "reset waited $((e-s))s for the holder, then ran" || bad "reset wait" "rc=$rc took $((e-s))s"
-
 # G. statusline still renders
 payload='{"session_id":"s1","model":{"display_name":"Opus"},"workspace":{"current_dir":"'"$HOME"'"},"cost":{"total_cost_usd":0.5}}'
 r=$(printf '%s' "$payload" | bash "$BIN/statusline.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
@@ -90,18 +64,17 @@ r=$(printf '%s' "$payload" | bash "$BIN/statusline.sh" 2>&1 | sed 's/\x1b\[[0-9;
 old=$(date -d '-20 minutes' +%Y%m%d%H%M 2>/dev/null || date -v-20M +%Y%m%d%H%M 2>/dev/null)
 : > "$ST/rate_cache.json.424242"; : > "$ST/cost_cache.json.Ab3Xy9"; : > "$ST/rate_cache.json.now"
 touch -t "$old" "$ST/rate_cache.json.424242" "$ST/cost_cache.json.Ab3Xy9" 2>/dev/null
-printf '{"updated_at":1,"today_cost":0}\n' > "$ST/cost_cache.json"
-# Section F's holder is still on disk (it is stale-gated, not released), and
-# a refresher that cannot take the lock leaves before it sweeps anything.
-rm -f "$LK/cost_cache.lock.held"
-bash "$BIN/cost_cache_refresh.sh" >/dev/null 2>&1
+printf '{"measured_at":1}\n' > "$ST/rate_cache.json"
+# A refresher that cannot take its lock leaves before it sweeps anything.
+rm -f "$LK/auth_cache.lock.held"
+bash "$BIN/auth_cache_refresh.sh" sweep-1 >/dev/null 2>&1
 [ ! -e "$ST/rate_cache.json.424242" ] && [ ! -e "$ST/cost_cache.json.Ab3Xy9" ] \
   && ok "the refresher swept both stale write temporaries" \
   || bad "temp sweep" "left: $(ls "$ST" | grep -c 'json\.')"
 [ -e "$ST/rate_cache.json.now" ] && ok "a temporary younger than the gate is left alone" \
   || bad "temp sweep" "removed a live writer's file"
-[ -f "$ST/cost_cache.json" ] && ok "the sweep never touches the caches themselves" \
-  || bad "temp sweep" "cost_cache.json is gone"
+[ -f "$ST/rate_cache.json" ] && ok "the sweep never touches the caches themselves" \
+  || bad "temp sweep" "rate_cache.json is gone"
 rm -f "$ST/rate_cache.json.now"
 ( . "$BIN/nutshell-lib.sh"; nut_write_atomic '{"a":1}' "$ST/sweeptest.json" )
 n=$(ls "$ST" | grep -c 'sweeptest\.json\.' || true)

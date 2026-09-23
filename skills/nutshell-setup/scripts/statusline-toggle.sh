@@ -2,10 +2,10 @@
 # statusline-toggle.sh: the only writer of config.json, and the command
 # behind every nutshell skill. Shows and hides the statusline parts,
 # switches emoji labels, hands the row back to Claude Code and takes it
-# again, resets the all-time cost, and uninstalls.
+# again, and uninstalls.
 #
-# The statusline (statusline.sh) has four parts:
-# Parts are the same four in both layouts. The line numbers below are the
+# The statusline (statusline.sh) has four parts, the same four in both
+# layouts. The line numbers below are the
 # detail layout; in simple they are segments of the one row, and hiding a
 # part removes its segment exactly as it removes its line here.
 #   model    : model name / advisor / context bar          (line 1)
@@ -13,11 +13,11 @@
 #              always renders and the row never collapses to nothing.
 #   session  : usage limits, current 5-hour window + current week, and the
 #              per-model weekly window when the account has one     (line 2)
-#   cost     : current session / today / weekly / monthly / all-time (line 3)
-#   workspace: current directory / repo / git branch          (line 4)
+#   cost     : the current session's cost, from the payload  (end of line 2)
+#   workspace: current directory / repo / git branch          (line 3)
 #
-# Independently of those, "emoji" swaps text labels ("model:", "current
-# session:", ...) for icons everywhere. Default OFF (fail-closed), unlike
+# Independently of those, "emoji" swaps text labels ("model:", "cost:",
+# ...) for icons everywhere. Default OFF (fail-closed), unlike
 # the parts, which fail open (missing key = shown): a missing or bad emoji
 # key must not silently switch the statusline to icons the user did not
 # ask for.
@@ -39,7 +39,6 @@ PARTS=(model session cost workspace)
 # leaving an empty row that shows neither our lines nor Claude Code's own
 # footer hints (those stay suppressed while the statusLine key is set).
 TOGGLEABLE_PARTS=(session cost workspace)
-REFRESH="$NUT_BIN_DIR/cost_cache_refresh.sh"
 DEFAULT_CONFIG='{
   "model": true,
   "cost": false,
@@ -62,7 +61,6 @@ Usage:
   statusline-toggle.sh mode [simple|detail]     # no arg = toggle; new installs start simple
   statusline-toggle.sh color [orange|blue]      # no arg = toggle; accent color, default orange
   statusline-toggle.sh status
-  statusline-toggle.sh reset-all-time --yes     # reset all-time cost to 0 (keeps today/weekly/monthly)
   statusline-toggle.sh uninstall --yes [--purge] # remove registration + installed scripts
 
 Parts (both layouts: the line numbers are the detail layout, and in simple
@@ -71,17 +69,17 @@ each part is a segment of the single row):
          always on: it cannot be hidden and `all` skips it
   session  usage limits: current 5-hour window, current week, and the
          per-model weekly window when the account has one       (line 2)
-  cost   current session / today / weekly / monthly / all-time spend (line 3)
-  workspace current directory / repo / git branch          (line 4)
+  cost   the current session's cost, after the rate windows (line 2)
+  workspace current directory / repo / git branch          (line 3)
   emoji  replace text labels with icons across all shown parts (default off)
   color  accent color every value is drawn in: orange (#D97757, the
          default) or blue (#8AB4F8). Experimental
 
 Modes:
-  detail  four rows, every part, labelled                 (the original)
+  detail  three rows, every part, labelled                (the original)
   simple  one row: model/effort, advisor, context counts, every rate
-          window with a countdown, repo@branch. No bar, no reset clock
-          times, and no cost at all: spend is a detail-layout row
+          window with a countdown, the session cost, repo@branch. No bar
+          and no reset clock times
 
 on / off vs show / hide:
   `off` removes the statusLine registration from settings.json, so Claude
@@ -122,7 +120,7 @@ ensure_config() {
       | (if (.mode == "simple" or .mode == "detail") then . else .mode = "detail" end)
       | (if (.color == "orange" or .color == "blue") then . else .color = "orange" end)
       # An existing config reaching here already had other keys, so it is an
-      # upgrade and keeps the four lines. Only DEFAULT_CONFIG, written when
+      # upgrade and keeps the detail layout. Only DEFAULT_CONFIG, written when
       # there is no usable config at all, starts on simple.'
   fi
 }
@@ -136,7 +134,7 @@ get_part() {
 
 # The render mode: "simple" or "detail". Anything else, including a missing
 # key, reads as "detail", which is what keeps an install written before
-# 0.3.4 on the four-line row until its owner asks for the other one.
+# 0.3.4 on the detail layout until its owner asks for the other one.
 get_mode() {
   [ "$(nut_config_raw mode)" = "simple" ] && echo simple || echo detail
 }
@@ -161,8 +159,8 @@ set_key() {
 
 # Part and emoji commands refuse while the statusline is inactive (handed
 # back to Claude Code with `off`), since nothing they change would be
-# visible. `status`, `on`, `off`, `reset-all-time` and `uninstall` still
-# work: none of them changes what a hidden row would render.
+# visible. `status`, `on`, `off` and `uninstall` still work: none of them
+# changes what a hidden row would render.
 require_active() {
   if nut_config_is_disabled; then
     echo "statusline: inactive. Run 'statusline-toggle.sh on' (the nutshell-active skill) first." >&2
@@ -349,7 +347,7 @@ cmd_emoji() {
   print_one emoji "$action"
 }
 
-# simple collapses the four rows into one; detail is the original. Bare
+# simple collapses the three rows into one; detail is the original. Bare
 # `mode` toggles, exactly like `emoji`. Gated by require_active like every
 # other setting that only changes what gets drawn.
 cmd_mode() {
@@ -389,34 +387,8 @@ cmd_color() {
   esac
 }
 
-# Not gated by require_active: the all-time total is cost history, not a
-# rendered part. An inactive statusline stops the tracking, which is exactly
-# when a user may want the counter zeroed before turning it back on.
-cmd_reset_all_time() {
-  if [ "${1:-}" != "--yes" ]; then
-    echo "statusline-toggle: 'reset-all-time' resets your all-time cost to 0 and cannot be undone." >&2
-    echo "(today / weekly / monthly are kept.) Re-run to confirm:" >&2
-    echo "  statusline-toggle.sh reset-all-time --yes" >&2
-    exit 1
-  fi
-  command -v ccusage >/dev/null 2>&1 || { echo "reset-all-time: ccusage is required for this operation" >&2; exit 1; }
-  if [ ! -f "$REFRESH" ]; then
-    echo "statusline-toggle: refresher not found at $REFRESH" >&2
-    exit 1
-  fi
-  echo "resetting all-time cost (recomputing from ccusage, ~10s)…"
-  # 90s is the cap on every platform: nut_timeout falls back to its own
-  # watcher where GNU timeout is missing, so a hung ccusage can no longer
-  # hang this command on macOS or Windows.
-  if ! nut_timeout 90 bash "$REFRESH" --reset-all-time; then
-    echo "statusline-toggle: reset failed or timed out" >&2
-    exit 1
-  fi
-  echo "done: all-time cost is now 0; today / weekly / monthly are unchanged."
-}
-
-# Remove the registration and the installed scripts. Config, cost history
-# and caches are kept unless --purge is given. ensure_config is skipped for
+# Remove the registration and the installed scripts. Config, caches and
+# any cost history an older version left are kept unless --purge is given. ensure_config is skipped for
 # this command: it must not recreate or rewrite the config it may be about
 # to remove, and the warn path must leave every file untouched.
 cmd_uninstall() {
@@ -430,7 +402,7 @@ cmd_uninstall() {
   if [ "$yes" != true ]; then
     echo "statusline-toggle: 'uninstall' removes the statusline registration from settings.json" >&2
     echo "and deletes the installed scripts from ~/.claude/nutshell/bin/. Your toggle" >&2
-    echo "config, cost history and rate cache are kept unless --purge is also given." >&2
+    echo "config and caches (and any cost history an older version left) are kept unless --purge is also given." >&2
     echo "Re-run to confirm:" >&2
     echo "  statusline-toggle.sh uninstall --yes [--purge]" >&2
     exit 1
@@ -453,8 +425,9 @@ cmd_uninstall() {
         "$NUT_SYNC_LOCK.held" "$NUT_COST_LOCK.held" "$NUT_AUTH_LOCK.held" \
         "$NUT_USAGE_LOCK.held"
   # Every installed script but this one, which goes last so the message
-  # below always gets printed.
-  for f in $NUT_INSTALLED_FILES; do
+  # below always gets printed, and any a previous version installed that
+  # sync.sh has not removed yet.
+  for f in $NUT_INSTALLED_FILES $NUT_RETIRED_BIN_FILES; do
     [ "$f" = statusline-toggle.sh ] || rm -f "$NUT_BIN_DIR/$f"
   done
   # Files a pre-0.3.1 install left directly in ~/.claude. Exact names only,
@@ -467,8 +440,8 @@ cmd_uninstall() {
           "$NUT_COST_CACHE" "$NUT_COST_LEDGER" "$NUT_COST_BASELINE" \
           "$NUT_RATE_CACHE" "$NUT_AUTH_CACHE" "$NUT_USAGE_CACHE"
     # Extra per-source ledgers, written by other tools and folded into the
-    # cost windows by the refresher. A glob, since the source names are not
-    # ours to know; with no match the literal pattern reaches rm -f, which
+    # retired ccusage cost windows. Nothing reads them now. A glob, since
+    # the source names are not ours to know; with no match the literal pattern reaches rm -f, which
     # ignores a path that does not exist.
     rm -f "$NUT_EXTRA_LEDGER_PREFIX"*.json
     # And the pre-0.3.1 equivalents of all of the above, for an install that
@@ -485,7 +458,7 @@ cmd_uninstall() {
   if [ "$purge" = true ]; then
     echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/, and purged config/cost/lock files plus any .bak files left by versions before 0.3.1."
   else
-    echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/. Config, cost history, rate cache, auth cache and any .bak files from versions before 0.3.1 were kept."
+    echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/. Config, rate cache, auth cache, any cost history an older version left and any .bak files from versions before 0.3.1 were kept."
   fi
   rm -f "$NUT_BIN_DIR/statusline-toggle.sh" "$NUT_CLAUDE_DIR/statusline-toggle.sh"
   # Drop the directories once their contents are gone. rmdir, never `rm -r`:
@@ -524,11 +497,10 @@ main() {
     emoji)                  cmd_emoji "${2:-}" ;;
     color)                  cmd_color "${2:-}" ;;
     mode)                   cmd_mode "${2:-}" ;;
-    reset-all-time)         cmd_reset_all_time "${2:-}" ;;
     uninstall)              shift; cmd_uninstall "$@" ;;
     "")                     usage; exit 1 ;;
     *)
-      echo "statusline-toggle: unknown part '$cmd' (expected model|session|cost|workspace|all|on|off|emoji|mode|color|status|reset-all-time|uninstall)" >&2
+      echo "statusline-toggle: unknown part '$cmd' (expected model|session|cost|workspace|all|on|off|emoji|mode|color|status|uninstall)" >&2
       usage
       exit 1
       ;;

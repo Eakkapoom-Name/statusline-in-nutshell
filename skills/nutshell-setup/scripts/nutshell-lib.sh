@@ -47,6 +47,11 @@ NUT_STATE_DIR="$NUT_DIR/state"
 NUT_LOCK_DIR="$NUT_DIR/locks"
 NUT_CONFIG="$NUT_DIR/config.json"
 
+# The three cost files and the extra ledgers below belong to the ccusage cost
+# windows, retired in favour of the payload's own session cost (the code is
+# in archived/). Nothing writes or reads them any more. The paths stay so
+# that `uninstall --purge` can still sweep what an older version left, and
+# so that rmdir of state/ and locks/ is not defeated by a leftover.
 NUT_COST_CACHE="$NUT_STATE_DIR/cost_cache.json"
 NUT_COST_LEDGER="$NUT_STATE_DIR/cost_ledger.json"
 NUT_COST_BASELINE="$NUT_STATE_DIR/cost_baseline.json"
@@ -65,10 +70,18 @@ NUT_USAGE_LOCK="$NUT_LOCK_DIR/usage_cache.lock"
 
 NUT_SETTINGS="$NUT_CLAUDE_DIR/settings.json"
 NUT_CREDENTIALS="$NUT_CLAUDE_DIR/.credentials.json"
+# Claude Code's own cache of the server model catalog, one file per account
+# (plus stale ones from accounts or orgs used before). Read-only for us, and
+# undocumented, so every reader must survive it being absent or reshaped.
+NUT_MODEL_CATALOG_DIR="$NUT_CLAUDE_DIR/cache/model-catalog"
 
 # The scripts installed into bin/, in install order. This library goes
 # first so no script ever lands before the file it sources.
-NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh cost_cache_refresh.sh auth_cache_refresh.sh usage_cache_refresh.sh"
+NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh auth_cache_refresh.sh usage_cache_refresh.sh"
+# Scripts earlier versions installed into bin/ and this one no longer does.
+# sync.sh deletes them once every current script is in place, and uninstall
+# deletes them too, or its rmdir of bin/ fails on an upgraded install.
+NUT_RETIRED_BIN_FILES="cost_cache_refresh.sh"
 
 # The settings.json registration. This is the only copy: sync.sh, the setup
 # skill (which runs sync.sh) and statusline-toggle.sh all register from it,
@@ -77,7 +90,7 @@ NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh cost_cac
 # refreshInterval is required, not cosmetic. Claude Code re-runs the command
 # on a few events (session start, a new assistant message, /compact, a
 # permission-mode change) and otherwise not at all, so every segment read
-# from disk rather than from the stdin payload (advisor, cost, rate cache)
+# from disk rather than from the stdin payload (advisor, rate and usage caches)
 # would sit stale while the session idles. The timer re-runs it on a clock.
 #
 # The interval is 1s everywhere except Windows, where it is 5s. That is not
@@ -89,9 +102,9 @@ NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh cost_cac
 # in five seconds across six sessions, sustained, with Defender scanning
 # each image. 5s divides all of that by five and costs at most five
 # seconds of lag on the three clock-driven fields, none of which can move
-# faster than their own caches anyway: cost and the usage windows sit
-# behind a 300s gate, and everything from the payload - model, context,
-# session cost - still repaints on the event, not on the timer.
+# faster than their own caches anyway: the usage windows sit behind a
+# 300s gate, and everything from the payload - model, context, session
+# cost - still repaints on the event, not on the timer.
 #
 # $OSTYPE, not `uname`: this file is sourced by the render, and a fork here
 # would be the very cost being avoided. Bash sets it at compile time, to
@@ -194,14 +207,13 @@ nut_write_atomic() {
 # ledger or cache from being truncated, or replaced with garbage, when an
 # upstream jq step silently produced empty or malformed output: rejected
 # content leaves the existing file untouched and returns 0 (there was
-# nothing to write). Only a failed write or rename returns 1, which is
-# what `reset-all-time` reads as "the reset did not land".
+# nothing to write). Only a failed write or rename returns 1, so a caller
+# can tell "nothing to write" from "the write did not land".
 nut_write_json_object() {
   local content="$1" target="$2" tmp
   nut_tmp_for "$target"; tmp="$NUT_TMP"
   # A temp file that cannot even be created is the old failed-mktemp case,
-  # and the caller has to hear about it: `reset-all-time` reads a 1 here as
-  # "the reset did not land".
+  # and the caller has to hear about it.
   printf '%s' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
   if [ -s "$tmp" ] && jq -e 'type == "object"' "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$target" 2>/dev/null
@@ -293,9 +305,10 @@ nut_spawn() {
 # ---------------------------------------------------------------------------
 
 # Seconds after which a held lock is treated as abandoned. Per call site,
-# because the jobs differ by two orders of magnitude: the sync hook and the
-# auth probe are seconds, a full ccusage rescan is 5 to 14 and a
-# reset-all-time is capped at 90.
+# because the jobs differ: the sync hook and the auth probe are seconds.
+# NUT_LOCK_STALE_COST was sized for the retired ccusage refresher (a full
+# rescan was 5 to 14s, a reset capped at 90) and is kept as the default
+# for nut_lock_acquire and nut_lock_wait when a caller names none.
 NUT_LOCK_STALE_SYNC=60
 NUT_LOCK_STALE_AUTH=60
 NUT_LOCK_STALE_COST=120
@@ -345,8 +358,10 @@ nut_lock_acquire() {
 }
 
 # Wait for lock $1 (stale after $2 seconds) for at most $3 seconds, then
-# give up and return 1. Used by reset-all-time, which must not be silently
-# skipped the way a background refresh is. The retry interval is a whole
+# give up and return 1. For a job that must not be silently skipped the way
+# a background refresh is. Its one caller, reset-all-time, was retired with
+# the ccusage cost windows (archived/); the helper stays, and t_shim.sh
+# still covers it. The retry interval is a whole
 # second: POSIX sleep promises no fractions and bash 3.2 is the floor.
 nut_lock_wait() {
   local lock="$1" stale="${2:-$NUT_LOCK_STALE_COST}" max="${3:-120}" waited=0

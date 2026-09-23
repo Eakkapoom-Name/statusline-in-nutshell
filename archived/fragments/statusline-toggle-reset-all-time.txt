@@ -1,0 +1,33 @@
+# From skills/nutshell-setup/scripts/statusline-toggle.sh at c01a8ad. Not sourced or run.
+
+REFRESH="$NUT_BIN_DIR/cost_cache_refresh.sh"
+
+  statusline-toggle.sh reset-all-time --yes     # reset all-time cost to 0 (keeps today/weekly/monthly)
+
+# Not gated by require_active: the all-time total is cost history, not a
+# rendered part. An inactive statusline stops the tracking, which is exactly
+# when a user may want the counter zeroed before turning it back on.
+cmd_reset_all_time() {
+  if [ "${1:-}" != "--yes" ]; then
+    echo "statusline-toggle: 'reset-all-time' resets your all-time cost to 0 and cannot be undone." >&2
+    echo "(today / weekly / monthly are kept.) Re-run to confirm:" >&2
+    echo "  statusline-toggle.sh reset-all-time --yes" >&2
+    exit 1
+  fi
+  command -v ccusage >/dev/null 2>&1 || { echo "reset-all-time: ccusage is required for this operation" >&2; exit 1; }
+  if [ ! -f "$REFRESH" ]; then
+    echo "statusline-toggle: refresher not found at $REFRESH" >&2
+    exit 1
+  fi
+  echo "resetting all-time cost (recomputing from ccusage, ~10s)…"
+  # 90s is the cap on every platform: nut_timeout falls back to its own
+  # watcher where GNU timeout is missing, so a hung ccusage can no longer
+  # hang this command on macOS or Windows.
+  if ! nut_timeout 90 bash "$REFRESH" --reset-all-time; then
+    echo "statusline-toggle: reset failed or timed out" >&2
+    exit 1
+  fi
+  echo "done: all-time cost is now 0; today / weekly / monthly are unchanged."
+}
+
+    reset-all-time)         cmd_reset_all_time "${2:-}" ;;

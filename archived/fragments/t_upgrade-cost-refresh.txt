@@ -1,0 +1,12 @@
+# From docs/test-harness/t_upgrade.sh at c01a8ad: the cost refresher case. Not run.
+
+cat > "$HOME/stub/ccusage" <<'S'
+#!/usr/bin/env bash
+printf 'scan\n' >> "$HOME/ccusage.log"
+printf '{"daily":[{"date":"2026-09-10","totalCost":1.0}]}\n'
+S
+chmod +x "$HOME/stub/ccusage"; export PATH="$HOME/stub:$PATH"
+
+: > "$HOME/ccusage.log"
+bash "$BIN/cost_cache_refresh.sh" >/dev/null 2>&1
+[ -s "$HOME/ccusage.log" ] && ok "old flock lock file does not block a refresh" || bad "upgrade" "refresh was skipped"

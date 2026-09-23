@@ -6,6 +6,13 @@ this one tracks work that is NOT done: it is the list of what still needs
 running on macOS, on Windows and under WSL, and it goes stale the moment
 those tests happen. Delete or rewrite it once they do.
 
+> Update 2026-09-23: the ccusage cost windows, the `Stop` hook,
+> `cost_cache_refresh.sh` and `reset-all-time` were retired (see
+> `archived/README.md`); the only cost left is the payload's session cost.
+> Every item below that asks for a `ccusage` scan, a cost row, a reset or the
+> doctor's `--probe` no longer applies and can be skipped. The suite counts
+> in the tables are from before that change; see `docs/test-harness/README.md`.
+
 ## What shipped in 0.3.4
 
 Three things, all on `main`:

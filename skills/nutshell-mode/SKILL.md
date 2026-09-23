@@ -1,6 +1,6 @@
 ---
 name: nutshell-mode
-description: (experimental) Switch the nutshell statusline between the one-line simple layout and the four-line detail layout. No argument toggles the mode, or say simple or detail. Use when the user mentions one line, single line, compact, simple, detail, shorter or longer statusline.
+description: (experimental) Switch the nutshell statusline between the one-line simple layout and the three-line detail layout. No argument toggles the mode, or say simple or detail. Use when the user mentions one line, single line, compact, simple, detail, shorter or longer statusline.
 argument-hint: "[simple|detail]"
 ---
 
@@ -26,17 +26,18 @@ dollar sign followed by a zero), there is no argument.
 
 `simple` is what a new install starts on; an install that predates 0.3.4
 keeps `detail` until its owner asks, so an upgrade never changes layout
-under them. `detail` is the four-row layout: model, advisor and the
-context bar, then the rate windows, then the cost windows, then the
-workspace. `simple` is one row holding model and effort, the advisor when
-there is one, the context counts, both rate windows with a countdown to
-their reset, and the repo with its branch. The context bar, the reset clock
-times and every cost window are what simple leaves out to fit, so the cost
-part changes nothing there and only the detail layout shows spend.
+under them. `detail` is the three-row layout: model, advisor and the
+context bar, then the rate windows followed by the current session's cost,
+then the workspace. `simple` is one row holding model and effort, the
+advisor when there is one, the context counts, both rate windows with a
+countdown to their reset, the session cost, and the repo with its branch.
+The context bar and the reset clock times are what simple leaves out to
+fit.
 
 The mode is independent of which parts are shown and of emoji labels:
 `nutshell-show` and `nutshell-hide` work in both layouts, where a hidden
-part drops its line in detail and its segment in simple, and icons replace
+part drops its line (or, for cost, its segment) in detail and its
+segment in simple, and icons replace
 the words in both. Never hand-edit `config.json`; the script is the only writer.
 
 ## How to answer

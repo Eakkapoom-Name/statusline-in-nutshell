@@ -1,0 +1,36 @@
+# From docs/test-harness/t_integ.sh at c01a8ad: sections A, E and F, the cost
+# refresher lock and reset-all-time. Not run. Needed the stub ccusage below.
+
+cat > "$HOME/stub/ccusage" <<'S'
+#!/usr/bin/env bash
+printf '%s ccusage %s\n' "$(date +%s)" "$*" >> "$HOME/ccusage.log"
+sleep 2
+printf '{"daily":[{"date":"2026-09-10","totalCost":1.23}]}\n'
+S
+
+# A. cost refresher: 10 concurrent background runs, exactly one scan
+: > "$HOME/ccusage.log"
+i=0; while [ "$i" -lt 10 ]; do bash "$BIN/cost_cache_refresh.sh" >/dev/null 2>&1 & i=$((i+1)); done
+wait
+n=$(grep -c ccusage "$HOME/ccusage.log" 2>/dev/null || echo 0)
+[ "$n" = "1" ] && ok "10 concurrent cost refreshes, 1 ccusage scan" || bad "cost lock" "$n scans, want 1"
+[ ! -f "$LK/cost_cache.lock.held" ] && ok "cost lock released after the run" || bad "cost lock" "held file leaked"
+
+# E. reset-all-time completes and reports done
+out=$(bash "$BIN/statusline-toggle.sh" reset-all-time --yes 2>&1); rc=$?
+printf '%s' "$out" | grep -q "done: all-time cost is now 0" && [ "$rc" -eq 0 ] \
+  && ok "reset-all-time reports done, rc 0" || bad "reset" "rc=$rc out=[$out]"
+
+# F. reset-all-time waits for a live holder instead of skipping
+printf '%s\n' 999999 > "$LK/cost_cache.lock.held"
+( sleep 3; rm -f "$LK/cost_cache.lock.held" ) &
+s=$(date +%s); out=$(bash "$BIN/statusline-toggle.sh" reset-all-time --yes 2>&1); rc=$?; e=$(date +%s)
+wait
+[ "$rc" -eq 0 ] && [ "$((e-s))" -ge 2 ] && ok "reset waited $((e-s))s for the holder, then ran" || bad "reset wait" "rc=$rc took $((e-s))s"
+
+# G2 ran the sweep through the cost refresher:
+printf '{"updated_at":1,"today_cost":0}\n' > "$ST/cost_cache.json"
+# Section F's holder is still on disk (it is stale-gated, not released), and
+# a refresher that cannot take the lock leaves before it sweeps anything.
+rm -f "$LK/cost_cache.lock.held"
+bash "$BIN/cost_cache_refresh.sh" >/dev/null 2>&1

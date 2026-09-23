@@ -1,0 +1,25 @@
+# From docs/test-harness/t_kill.sh at c01a8ad: cases 1 and 2, a reset-all-time
+# killed by nut_timeout must fail rather than report success. Not run.
+# They needed the stub ccusage below (sleep 300) and cost_cache_refresh.sh.
+
+cat > "$HOME/stub/ccusage" <<'S'
+#!/usr/bin/env bash
+sleep 300
+S
+
+# 1 a killed refresher reports failure, not success
+s=$(date +%s)
+nut_timeout 3 bash "$BIN/cost_cache_refresh.sh" --reset-all-time >/dev/null 2>&1; rc=$?
+e=$(date +%s)
+[ "$rc" -ne 0 ] && ok "killed reset returns non-zero (rc=$rc)" || bad "killed reset" "rc=0, would report done"
+[ "$((e-s))" -lt 8 ] && ok "killed reset returned in $((e-s))s" || bad "killed reset" "took $((e-s))s"
+[ ! -f "$LK/cost_cache.lock.held" ] && ok "lock released by the signal trap" || bad "killed reset" "lock leaked"
+
+# 2 the same through the user-facing command
+s=$(date +%s)
+out=$(bash "$BIN/statusline-toggle.sh" reset-all-time --yes 2>&1); rc=$?
+e=$(date +%s)
+printf '%s' "$out" | grep -q "reset failed or timed out" && [ "$rc" -ne 0 ] \
+  && ok "toggle reports 'reset failed or timed out' after $((e-s))s" \
+  || bad "toggle reset" "rc=$rc out=[$(printf '%s' "$out" | tail -1)]"
+
