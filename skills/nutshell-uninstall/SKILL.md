@@ -1,6 +1,6 @@
 ---
 name: nutshell-uninstall
-description: Remove the nutshell statusline, unregistering it and deleting the installed scripts from ~/.claude/, optionally purging the toggle config and cost history. Asks for confirmation first. Use when the user asks to uninstall or completely remove the nutshell statusline.
+description: Remove the nutshell statusline, unregistering it and deleting the installed scripts from ~/.claude/, optionally purging the toggle config and caches. Asks for confirmation first. Use when the user asks to uninstall or completely remove the nutshell statusline.
 argument-hint: "[--purge]"
 ---
 
@@ -22,11 +22,11 @@ an explicit request to wipe config and cost history, as the purge variant.
    confirmation, not after, but do not wait for them to do it: removing the
    plugin first would take this command with it.
 2. Ask: "This removes the statusline registration and deletes the installed
-   scripts from ~/.claude/nutshell/bin/. Your toggle config and cost history
-   are kept. Proceed?" For the purge variant, ask instead: "This removes the
+   scripts from ~/.claude/nutshell/bin/. Your toggle config and caches, and
+   any cost history an older version left, are kept. Proceed?" For the purge variant, ask instead: "This removes the
    statusline registration and the whole ~/.claude/nutshell/ directory, so
-   your toggle config and cost history go too, including any cost ledgers
-   written by other tools and any .bak files left by versions before 0.3.1.
+   your toggle config and caches go too, including any cost history and
+   cost ledgers an older version or another tool left and any .bak files left by versions before 0.3.1.
    Proceed?" Wait for an answer.
 3. Only after yes, run one of:
 

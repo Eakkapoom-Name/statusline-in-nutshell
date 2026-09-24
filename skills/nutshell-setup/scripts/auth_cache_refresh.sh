@@ -43,6 +43,10 @@ nut_ensure_dirs
 # lose an entry on stock macOS cannot happen there any more.
 nut_lock_acquire "$NUT_AUTH_LOCK" "$NUT_LOCK_STALE_AUTH" || exit 0
 
+# See nut_sweep_write_temps: killed renders leave write temporaries behind,
+# and the background refreshers are the ones that can afford to clear them.
+nut_sweep_write_temps
+
 now=$(date +%s)
 
 # A hung probe is cut short at 15s on every platform: nut_timeout uses GNU

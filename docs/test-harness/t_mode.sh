@@ -5,9 +5,8 @@ mkdir -p "$BIN" "$ST" "$HOME/.claude/nutshell/locks"
 for f in nutshell-lib.sh statusline.sh statusline-toggle.sh; do cp "$REPO/skills/nutshell-setup/scripts/$f" "$BIN/$f"; done
 printf '{"advisorModel":"opus"}\n' > "$HOME/.claude/settings.json"
 now=$(date +%s)
-printf '{"updated_at":%s,"today_cost":12.34,"weekly_cost":56.78,"monthly_cost":123.45,"all_time_cost":2930.12}\n' "$now" > "$ST/cost_cache.json"
 printf '{"sessions":{"s1":{"subscription_type":"max","updated_at":%s,"sig":1}}}\n' "$now" > "$ST/auth_cache.json"
-printf '{"five_hour":{"used_percentage":42,"resets_at":%s},"seven_day":{"used_percentage":67,"resets_at":%s},"seen":{"plan":"max","windows":["five_hour","seven_day"]},"sessions":{"s1":{"sig":1,"at":%s}},"measured_at":%s}\n' "$((now+17760))" "$((now+349200))" "$now" "$now" > "$ST/rate_cache.json"
+printf '{"five_hour":{"used_percentage":42,"resets_at":%s},"seven_day":{"used_percentage":67,"resets_at":%s},"seen":{"plan":"max","windows":["five_hour","seven_day"]},"sessions":{"s1":{"sig":1,"at":%s}},"measured_at":%s}\n' "$((now+17760))" "$((now+349200))" "$now" "$now" > "$ST/shared_rate_limit_cache.json"
 mkdir -p "$HOME/work/statusline-in-nutshell/.git" "$HOME/work/statusline-in-nutshell/skills/deep" "$HOME/scratch/notes"
 printf 'ref: refs/heads/main\n' > "$HOME/work/statusline-in-nutshell/.git/HEAD"
 cfg() { printf '{"model":true,"cost":%s,"session":%s,"workspace":%s,"emoji":%s,"mode":"%s","disabled":false}\n' "$1" "$2" "$3" "$4" "$5" > "$HOME/.claude/nutshell/config.json"; }

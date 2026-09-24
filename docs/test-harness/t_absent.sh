@@ -7,7 +7,7 @@
 REPO="$1"; export HOME="$2"
 BIN="$HOME/.claude/nutshell/bin"; ST="$HOME/.claude/nutshell/state"
 mkdir -p "$BIN" "$ST" "$HOME/.claude/nutshell/locks"
-for f in nutshell-lib.sh statusline.sh usage_cache_refresh.sh; do
+for f in nutshell-lib.sh statusline.sh account_usage_cache_refresh.sh; do
   cp "$REPO/skills/nutshell-setup/scripts/$f" "$BIN/$f"
 done
 printf '{}\n' > "$HOME/.claude/settings.json"
@@ -33,15 +33,15 @@ printf '{"claudeAiOauth":{"accessToken":"test-token"}}\n' > "$HOME/.claude/.cred
 export STUB_BODY="$HOME/body.json"
 iso5=$(date -u -d "@$five" +%Y-%m-%dT%H:%M:%S.123456+00:00 2>/dev/null || date -u -r "$five" +%Y-%m-%dT%H:%M:%S.123456+00:00)
 iso7=$(date -u -d "@$week" +%Y-%m-%dT%H:%M:%S.123456+00:00 2>/dev/null || date -u -r "$week" +%Y-%m-%dT%H:%M:%S.123456+00:00)
-probe() { rm -f "$ST/usage_cache.json"; PATH="$STUB:$PATH" bash "$BIN/usage_cache_refresh.sh" 2.1.0; }
-absent() { jq -c '.windows_absent' "$ST/usage_cache.json"; }
+probe() { rm -f "$ST/account_usage_cache.json"; PATH="$STUB:$PATH" bash "$BIN/account_usage_cache_refresh.sh" 2.1.0; }
+absent() { jq -c '.windows_absent' "$ST/account_usage_cache.json"; }
 
 # Shape of a real response for an account with no weekly limit: the key is
 # there and null, and limits[] has no weekly_all entry.
 printf '{"five_hour":{"utilization":19},"seven_day":null,"limits":[{"kind":"session","percent":19,"resets_at":"%s"}]}' "$iso5" > "$STUB_BODY"
 probe
 eq "probe: a null key and no limits entry mark the window absent" "$(absent)" '["seven_day"]'
-eq "probe: the window that is there is still read" "$(jq -r .windows.five_hour.used_percentage "$ST/usage_cache.json")" "19"
+eq "probe: the window that is there is still read" "$(jq -r .windows.five_hour.used_percentage "$ST/account_usage_cache.json")" "19"
 
 # Both windows present: nothing is absent.
 printf '{"five_hour":{},"seven_day":{},"limits":[{"kind":"session","percent":19,"resets_at":"%s"},{"kind":"weekly_all","percent":89,"resets_at":"%s"}]}' "$iso5" "$iso7" > "$STUB_BODY"
@@ -69,11 +69,11 @@ eq "probe: no limits array, nothing absent" "$(absent)" '[]'
 # absence stays dated to the probe that measured it.
 printf '{"five_hour":{},"seven_day":null,"limits":[{"kind":"session","percent":19,"resets_at":"%s"}]}' "$iso5" > "$STUB_BODY"
 probe
-wat=$(jq -r .windows_at "$ST/usage_cache.json")
+wat=$(jq -r .windows_at "$ST/account_usage_cache.json")
 printf '{"error":{"type":"rate_limit_error"}}' > "$STUB_BODY"
-PATH="$STUB:$PATH" bash "$BIN/usage_cache_refresh.sh" 2.1.0
+PATH="$STUB:$PATH" bash "$BIN/account_usage_cache_refresh.sh" 2.1.0
 eq "probe: a failed call keeps the absence" "$(absent)" '["seven_day"]'
-eq "probe: and keeps its windows_at" "$(jq -r .windows_at "$ST/usage_cache.json")" "$wat"
+eq "probe: and keeps its windows_at" "$(jq -r .windows_at "$ST/account_usage_cache.json")" "$wat"
 
 # ---------------------------------------------------------------------------
 # The render.
@@ -82,12 +82,12 @@ printf '{"sessions":{"s1":{"subscription_type":"team","updated_at":%s}}}\n' "$no
 # fresh render AFTER the probe, and with no per-window stamp (pre-0.3.7).
 oldrate() {
   printf '{"five_hour":{"used_percentage":19,"resets_at":%s},"seven_day":{"used_percentage":89,"resets_at":%s},"measured_at":%s,"seen":{"plan":"team","windows":["five_hour","seven_day"]},"sessions":{"s1":{"sig":"%s","at":%s}}}\n' \
-    "$five" "$week" "$1" "$2" "$((now-600))" > "$ST/rate_cache.json"
+    "$five" "$week" "$1" "$2" "$((now-600))" > "$ST/shared_rate_limit_cache.json"
 }
 # usage <windows_at> <windows_absent json>
 usage() {
   printf '{"updated_at":%s,"windows_at":%s,"models":{},"windows":{"five_hour":{"used_percentage":19,"resets_at":%s}},"windows_absent":%s}\n' \
-    "$1" "$1" "$five" "$2" > "$ST/usage_cache.json"
+    "$1" "$1" "$five" "$2" > "$ST/account_usage_cache.json"
 }
 pay5() {
   printf '{"session_id":"s1","version":"2.1.0","model":{"display_name":"Opus 5"},"workspace":{"current_dir":"%s"},"cost":{"total_cost_usd":%s},"rate_limits":{"five_hour":{"used_percentage":19,"resets_at":%s}}}' \
@@ -109,8 +109,8 @@ usage $((now-30)) '["seven_day"]'
 out=$(run "$(pay5 6.0)")
 eq "fresh: an absent window is not rendered"       "$(w7 "$out")" "none"
 eq "fresh: the 5h window still is"                 "$(w5 "$out")" "19"
-eq "fresh: the absent window leaves the cache"     "$(jq -r 'has("seven_day")' "$ST/rate_cache.json")" "false"
-eq "fresh: and leaves seen.windows"                "$(jq -c .seen.windows "$ST/rate_cache.json")" '["five_hour"]'
+eq "fresh: the absent window leaves the cache"     "$(jq -r 'has("seven_day")' "$ST/shared_rate_limit_cache.json")" "false"
+eq "fresh: and leaves seen.windows"                "$(jq -c .seen.windows "$ST/shared_rate_limit_cache.json")" '["five_hour"]'
 
 # Idle tab: a frozen payload still carrying the old weekly reading.
 oldrate $((now-10)) 5.0
@@ -120,21 +120,21 @@ eq "idle: a frozen payload cannot bring it back" "$(w7 "$out")" "none"
 
 # Once dropped, the next render writes nothing.
 run "$(pay5 5.0)" >/dev/null
-before=$(jq -c . "$ST/rate_cache.json"); bm=$(mtime "$ST/rate_cache.json")
+before=$(jq -c . "$ST/shared_rate_limit_cache.json"); bm=$(mtime "$ST/shared_rate_limit_cache.json")
 run "$(pay5 5.0)" >/dev/null
-eq "the dropped cache settles"        "$(jq -c . "$ST/rate_cache.json")" "$before"
-eq "and the next render writes nothing" "$(mtime "$ST/rate_cache.json")" "$bm"
+eq "the dropped cache settles"        "$(jq -c . "$ST/shared_rate_limit_cache.json")" "$before"
+eq "and the next render writes nothing" "$(mtime "$ST/shared_rate_limit_cache.json")" "$bm"
 
 # A usage cache written before 0.3.7 has no windows_absent: nothing changes.
 oldrate $((now-10)) 5.0
 printf '{"updated_at":%s,"windows_at":%s,"models":{},"windows":{"five_hour":{"used_percentage":19,"resets_at":%s}}}\n' \
-  "$((now-30))" "$((now-30))" "$five" > "$ST/usage_cache.json"
+  "$((now-30))" "$((now-30))" "$five" > "$ST/account_usage_cache.json"
 out=$(run "$(pay5 5.0)")
 eq "no windows_absent key keeps the cached window" "$(w7 "$out")" "89"
 
 # A reading measured after the probe outranks the absence.
 printf '{"five_hour":{"used_percentage":19,"resets_at":%s,"at":%s},"seven_day":{"used_percentage":89,"resets_at":%s,"at":%s},"measured_at":%s,"seen":{"plan":"team","windows":["five_hour","seven_day"]},"sessions":{"s1":{"sig":"5.0","at":%s}}}\n' \
-  "$five" "$((now-5))" "$week" "$((now-5))" "$((now-5))" "$((now-600))" > "$ST/rate_cache.json"
+  "$five" "$((now-5))" "$week" "$((now-5))" "$((now-5))" "$((now-600))" > "$ST/shared_rate_limit_cache.json"
 usage $((now-30)) '["seven_day"]'
 out=$(run "$(pay5 5.0)")
 eq "a window measured after the probe is kept" "$(w7 "$out")" "89"
@@ -146,9 +146,9 @@ usage $((now-30)) '["seven_day"]'
 run "$(pay5 6.0)" >/dev/null
 out=$(run "$(pay57 7.0 3)")
 eq "a fresh payload brings the window back"      "$(w7 "$out")" "3"
-eq "it is published again"                       "$(jq -r .seven_day.used_percentage "$ST/rate_cache.json")" "3"
-eq "stamped with this render"                    "$(jq -r '.seven_day.at > '"$((now-30))" "$ST/rate_cache.json")" "true"
-eq "and seen.windows lists it again"             "$(jq -c .seen.windows "$ST/rate_cache.json")" '["five_hour","seven_day"]'
+eq "it is published again"                       "$(jq -r .seven_day.used_percentage "$ST/shared_rate_limit_cache.json")" "3"
+eq "stamped with this render"                    "$(jq -r '.seven_day.at > '"$((now-30))" "$ST/shared_rate_limit_cache.json")" "true"
+eq "and seen.windows lists it again"             "$(jq -c .seen.windows "$ST/shared_rate_limit_cache.json")" '["five_hour","seven_day"]'
 # And an idle tab then reads it from the cache, the absence being older.
 out=$(run "$(pay5 7.0)")
 eq "an idle tab reads the returned window" "$(w7 "$out")" "3"
@@ -158,6 +158,6 @@ printf '{"sessions":{"s1":{"subscription_type":null,"updated_at":%s}}}\n' "$now"
 oldrate $((now-10)) 5.0
 usage $((now-30)) '["seven_day"]'
 run "$(pay57 5.0 40)" >/dev/null
-eq "a metered session leaves the shared cache alone" "$(jq -r .seven_day.used_percentage "$ST/rate_cache.json")" "89"
+eq "a metered session leaves the shared cache alone" "$(jq -r .seven_day.used_percentage "$ST/shared_rate_limit_cache.json")" "89"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]

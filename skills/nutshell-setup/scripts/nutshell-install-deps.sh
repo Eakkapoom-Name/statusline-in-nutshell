@@ -226,7 +226,7 @@ version_of() { # channel pkg
 # the plan
 #
 # One line per dependency the doctor did not call ok, in the doctor's own
-# order, which is jq, bash, ccusage, claude: the stop conditions first.
+# order, which is jq, bash, claude, curl: the stop conditions first.
 #
 #   plan <dep> <run|skip> <channel> <version> <command or reason> <current verdict>
 # ---------------------------------------------------------------------------
