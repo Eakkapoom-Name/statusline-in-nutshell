@@ -9,14 +9,17 @@
 # not call this script at all.
 #
 # Written to survive the very thing it diagnoses: it must run and produce a
-# useful report on a machine with no jq, so nothing here parses JSON, and
-# the only tools used are the ones every POSIX system already has. Stock
+# useful report on a machine with no jq, so nothing outside --probe parses
+# JSON, and the only tools used are the ones every POSIX system already
+# has (--probe needs both ccusage and jq, and says so when either is
+# absent rather than failing). Stock
 # bash 3.2 (macOS), BSD userland, no GNU coreutils assumed, same rules as
 # the rest of the plugin.
 #
 # Usage:
 #   nutshell-doctor.sh              human-readable table
 #   nutshell-doctor.sh --porcelain  tab-separated records, for the skill
+#   nutshell-doctor.sh --probe      also run the ccusage schema probe (slow)
 #
 # Exit status: 0 when every REQUIRED dependency is satisfied, 1 when one is
 # missing or too old. Optional gaps never fail the run, because the status
@@ -39,9 +42,11 @@ case "${BASH_SOURCE[0]}" in */*) NUT_LIB_DIR="${BASH_SOURCE[0]%/*}" ;; *) NUT_LI
 : "${NUT_BIN_DIR:=$HOME/.claude/nutshell/bin}"
 
 porcelain=0
+probe=0
 for arg in "$@"; do
   case "$arg" in
     --porcelain) porcelain=1 ;;
+    --probe)     probe=1 ;;
     # Print the header comment, from the line after the shebang up to the
     # first line that is not a comment. A fixed line range drifts silently
     # the moment the header is edited, which is how --help ends up printing
@@ -56,7 +61,7 @@ done
 # ---------------------------------------------------------------------------
 
 # First dotted number in a --version line. Every tool this plugin touches
-# prints its version differently ("jq-1.8.2", "curl 8.5.0",
+# prints its version differently ("jq-1.8.2", "ccusage 20.0.20",
 # "2.1.224 (Claude Code)", "GNU bash, version 3.2.57(1)-release"), and in
 # all of them the first dotted number is the version. Cheaper and steadier
 # than a pattern per tool.
@@ -113,19 +118,11 @@ case "$(uname -s 2>/dev/null)" in
     # /etc/os-release is the only cross-distro answer; ID_LIKE is what makes
     # a derivative (Mint, Pop!_OS, Zorin) resolve to its apt/dnf parent
     # instead of falling through to "unknown".
-    #
-    # $NUT_OS_RELEASE names a different file when it is set, which is the
-    # test harness and nothing else: the suite has to be able to ask what
-    # this would say on Ubuntu while running on macOS or on Windows, where
-    # /etc/os-release does not exist and the distro arms could otherwise
-    # only be verified on a distro. Unset, which is every real run, the
-    # path is the one it always was.
-    osrel="${NUT_OS_RELEASE:-/etc/os-release}"
-    if [ -r "$osrel" ]; then
+    if [ -r /etc/os-release ]; then
       # One subshell for all three values: sourcing it once per variable
       # read the same file three times to answer three questions.
       IFS="$us" read -r os_name os_version os_like <<EOF
-$(. "$osrel" 2>/dev/null; printf '%s\037%s\037%s' "${ID:-Linux}" "${VERSION_ID:-}" "${ID_LIKE:-}")
+$(. /etc/os-release 2>/dev/null; printf '%s\037%s\037%s' "${ID:-Linux}" "${VERSION_ID:-}" "${ID_LIKE:-}")
 EOF
       case " $os_name $os_like " in
         *" debian "*|*" ubuntu "*) os_family="debian" ;;
@@ -167,7 +164,9 @@ pkgmgrs="${pkgmgrs# }"
 # remedies
 #
 # One function per dependency rather than a table, because the answer
-# genuinely differs by OS and by which package manager exists.
+# genuinely differs by OS and by what is already installed: ccusage has no
+# distro package anywhere, so on Linux it walks a chain of channels and the
+# right one depends on which package manager exists.
 # ---------------------------------------------------------------------------
 
 remedy_jq() {
@@ -213,6 +212,95 @@ remedy_curl() {
     *)       echo "install curl with your package manager" ;;
   esac
 }
+
+# ccusage ships no distro package on any platform. Homebrew is first
+# wherever it exists because its bottle is a self-contained native binary
+# (no Node runtime) and it is bottled for Linux as well as macOS; the
+# JavaScript channels come next only because they need a runtime the user
+# may not want. `nix run` is last: it works, but it is not an install.
+remedy_ccusage() {
+  if have brew; then echo "brew install ccusage"; return; fi
+  if [ "$os_kind" = "macos" ]; then
+    echo "install Homebrew (https://brew.sh), then: brew install ccusage"; return
+  fi
+  if have npm; then echo "npm install -g ccusage   # may need sudo with a system node"; return; fi
+  if have bun; then echo "bun add -g ccusage"; return; fi
+  if have nix; then echo "nix run github:ccusage/ccusage   # runs it, does not install it"; return; fi
+  if [ "$os_kind" = "windows" ]; then
+    echo "install Node (winget install --id OpenJS.NodeJS.LTS -e), then: npm install -g ccusage"; return
+  fi
+  echo "no channel found: install Homebrew, Node (npm) or Bun first"
+}
+
+# The channel a present ccusage came through, guessed from where its binary
+# sits, because upgrading it through a different one leaves two copies and
+# the wrong one first on PATH. Only reached when ccusage is already
+# installed, so the guess always has a path to work from.
+#
+# The symlink target is examined along with the path, and the node channels
+# are checked before the prefixes, because the two are not distinguishable
+# by prefix alone: `npm install -g` under a Homebrew-installed node puts its
+# shim in Homebrew's own bin directory, so matching the prefix first would
+# call an npm install a brew one and hand back `brew upgrade` for a formula
+# that was never installed. The link points into node_modules, which settles
+# it.
+#
+# Within the node channels the order is specific before generic, and that
+# ordering is load-bearing rather than tidy. Every node-based channel routes
+# through node_modules -- a bun global links to
+# ../install/global/node_modules/ccusage/src/cli.js, a pnpm global to
+# .../pnpm/global/<n>/node_modules/... -- so a node_modules arm placed first
+# swallows both and answers `npm` for all three. bun and pnpm carry markers
+# that npm never does; npm's only reliable marker is the one they all share,
+# so it has to go last.
+remedy_ccusage_upgrade() {
+  local p t
+  p=$(command -v ccusage 2>/dev/null)
+  t=$(readlink "$p" 2>/dev/null) || t=""
+  case "$p$t" in
+    *"/.bun/"*|*"/bun/"*) echo "bun add -g ccusage@latest"; return ;;
+    *pnpm*)      echo "pnpm add -g ccusage@latest"; return ;;
+    *node_modules*|*"/.npm-global/"*|*"/.npm/"*)
+        echo "npm install -g ccusage@latest   # may need sudo with a system node"; return ;;
+    */Cellar/*|/opt/homebrew/*|/home/linuxbrew/*|/usr/local/*)
+                 echo "brew upgrade ccusage"; return ;;
+  esac
+  if have brew; then echo "brew upgrade ccusage"
+  elif have npm;  then echo "npm install -g ccusage@latest   # may need sudo with a system node"
+  elif have bun;  then echo "bun add -g ccusage@latest"
+  else echo "upgrade ccusage through whichever channel installed $p"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# ccusage schema probe (--probe)
+#
+# The authoritative check, and the only one that proves the cost windows
+# will actually fill: run the real command against a one-day window and
+# look for the field the refresher reads. A version comparison cannot do
+# this, because the field name is not a documented function of the version.
+# Costs seconds (it reads transcripts), which is why it is opt-in.
+#
+# It runs before the checks below, not after, because a failed probe is
+# what downgrades the ccusage record: a binary that answers with the wrong
+# schema is exactly as useless as one that is too old, and saying so in
+# the record is what gives the setup skill something to act on.
+# ---------------------------------------------------------------------------
+
+probe_result="skipped"
+if [ "$probe" -eq 1 ]; then
+  if have ccusage && have jq; then
+    today=$(date +%Y%m%d)
+    if ccusage daily --since "$today" --json 2>/dev/null \
+       | jq -e '(.daily // []) | length == 0 or (.[0] | has("period"))' >/dev/null 2>&1; then
+      probe_result="ok"
+    else
+      probe_result="fail"
+    fi
+  else
+    probe_result="unavailable"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # checks
@@ -273,13 +361,38 @@ else
   add_dep bash required missing - - "install bash" "the statusline cannot run at all"
 fi
 
+# ccusage. No version floor is asserted here, and that is deliberate. The
+# scripts read `.daily[].period`, a field older releases called something
+# else; 19.0.3 is the oldest release the field is confirmed in, but the
+# release notes never documented the rename, so any number written here
+# would be a guess. A fresh install gets the latest and the question does
+# not arise; an existing install is settled by --probe, which asks the
+# binary instead of asking a changelog, and keeps working if the field is
+# ever renamed again.
+if have ccusage; then
+  v=$(ver_of ccusage)
+  if [ "$probe_result" = "fail" ]; then
+    # Installed, and answering with a schema the refresher cannot read. The
+    # windows stay empty exactly as if it were absent, so it is reported as
+    # `old` with an upgrade command rather than `ok`: a verdict the setup
+    # skill already knows how to act on.
+    add_dep ccusage required old "$v" "$(command -v ccusage)" "$(remedy_ccusage_upgrade)" \
+      "answers without the .daily[].period field; the cost windows stay empty"
+  else
+    add_dep ccusage required ok "$v" "$(command -v ccusage)" - -
+  fi
+else
+  add_dep ccusage required missing - - "$(remedy_ccusage)" \
+    "today / weekly / monthly / all-time stay empty; reset-all-time unavailable"
+fi
+
 # claude on PATH. Only used by the background probe that decides whether
 # this account has rate limits at all.
 if have claude; then
   add_dep claude required ok "$(ver_of claude)" "$(command -v claude)" - -
 else
   add_dep claude required missing - - "already installed if you are reading this; check your PATH" \
-    "line 2 can show a 0% row it should have left out"
+    "line 3 can show a 0% row it should have left out"
 fi
 
 # curl, the one optional entry. A missing curl costs the per-model weekly
@@ -316,6 +429,7 @@ if [ "$porcelain" -eq 1 ]; then
   printf 'os\t%s\t%s\t%s\t%s\n' "$os_kind" "$os_name" "${os_version:--}" "${os_arch:--}"
   printf 'pkgmgr\t%s\n' "$pkgmgrs"
   printf 'install\t%s\t%s\n' "$install_state" "$NUT_BIN_DIR"
+  printf 'probe\tccusage_schema\t%s\n' "$probe_result"
   printf '%s' "$records" | while IFS="$tab" read -r n t v ver p r l; do
     [ -n "$n" ] || continue
     printf 'dep\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$t" "$v" "$ver" "$p" "$r" "$l"
@@ -326,6 +440,7 @@ fi
 printf '%s %s (%s), %s\n' "$os_name" "${os_version:-?}" "$os_kind" "${os_arch:-?}"
 printf 'package managers: %s\n' "$pkgmgrs"
 printf 'installed scripts: %s (%s)\n' "$install_state" "$NUT_BIN_DIR"
+[ "$probe_result" = "skipped" ] || printf 'ccusage schema probe: %s\n' "$probe_result"
 printf '\n%-9s %-9s %-8s %-9s %s\n' DEP TIER STATUS VERSION "FIX"
 printf '%s' "$records" | while IFS="$tab" read -r n t v ver p r l; do
   [ -n "$n" ] || continue
@@ -333,8 +448,9 @@ printf '%s' "$records" | while IFS="$tab" read -r n t v ver p r l; do
     printf '%-9s %-9s %-8s %-9s %s\n' "$n" "$t" "$v" "$ver" "-"
   else
     printf '%-9s %-9s %-8s %-9s %s\n' "$n" "$t" "$v" "$ver" "$r"
-    # One label for every verdict. The sentence differs (a version floor, a
-    # lost feature) but every one of them is the reason to run the command on the line above.
+    # One label for all three verdicts. The sentence differs (a version
+    # floor, a lost feature, a binary answering with the wrong schema) but
+    # every one of them is the reason to run the command on the line above.
     printf '%-9s %-9s %-8s %-9s   why: %s\n' "" "" "" "" "$l"
   fi
 done

@@ -1,6 +1,6 @@
 ---
 name: nutshell-setup
-description: Install or repair the nutshell statusline by checking its dependencies, copying the bundled scripts into ~/.claude/nutshell/bin/ and registering the statusLine command in settings.json. Use when the statusline scripts are missing, the statusline is broken, blank or stale, or when the user asks to install, reinstall, repair, fix or update the nutshell statusline. The other nutshell statusline skills call this one when the scripts are missing.
+description: Install or repair the nutshell statusline by checking its dependencies, copying the bundled scripts into ~/.claude/nutshell/bin/ and registering the statusLine command in settings.json. Use when the statusline scripts are missing, the statusline is broken, blank or stale, when parts of the cost line stay empty, or when the user asks to install, reinstall, repair, fix or update the nutshell statusline. The other nutshell statusline skills call this one when the scripts are missing.
 ---
 
 # Install the nutshell statusline
@@ -20,17 +20,14 @@ Everything this plugin owns lives under `~/.claude/nutshell/`:
 ```
 ~/.claude/nutshell/
   bin/     nutshell-lib.sh  statusline.sh  statusline-toggle.sh
-           auth_cache_refresh.sh  account_usage_cache_refresh.sh
+           cost_cache_refresh.sh  auth_cache_refresh.sh
+           usage_cache_refresh.sh
   config.json
-  state/   shared_rate_limit_cache.json  auth_cache.json  account_usage_cache.json
-  locks/   sync.lock  auth_cache.lock  account_usage_cache.lock
+  state/   cost_cache.json  cost_ledger.json  cost_baseline.json
+           rate_cache.json  auth_cache.json  usage_cache.json
+           ledger_<source>.json
+  locks/   sync.lock  cost_cache.lock  auth_cache.lock  usage_cache.lock
 ```
-
-An install from before the ccusage cost windows were retired may still
-hold `state/cost_cache.json`, `cost_ledger.json`, `cost_baseline.json`,
-`ledger_<source>.json` and `locks/cost_cache.lock`. Nothing reads them any
-more; `uninstall --purge` removes them. The sync deletes the old
-`bin/cost_cache_refresh.sh` itself.
 
 `nutshell-doctor.sh` and `nutshell-install-deps.sh` are deliberately not in
 that list. They are setup-time tools, they run from the plugin directory,
@@ -60,20 +57,33 @@ diagnosing. Records are tab-separated:
 os       <kind> <name> <version> <arch>
 pkgmgr   <package managers found, space separated>
 install  <ok|incomplete|unknown> <bin dir>
+probe    ccusage_schema <ok|fail|skipped|unavailable>
 dep      <name> <required> <ok|old|missing> <version> <path> <fix> <cost if absent>
 ```
 
-Three of the four are required, so exit status 1 means at least one of THOSE
+Four of the five are required, so exit status 1 means at least one of THOSE
 is missing or too old. `curl` is the one optional entry and never affects
 the exit status. `flock` and `timeout` are not reported at all: the library
 carries its own lock and its own timeout, so neither tool has to be
 installed on any platform.
 
-Missing does not mean the same thing for all four. `jq` and `bash` are
-stop conditions, nothing works without them. `claude` leaves the install
-worth finishing, with a rate row that can be wrong until it is there.
-`curl` costs one experimental segment, and leaves the rate percentages
-waiting for a reply before they refresh.
+Missing does not mean the same thing for all five. `jq` and `bash` are
+stop conditions, nothing works without them. `ccusage` and `claude` leave
+the install worth finishing, with rows that stay permanently empty or
+wrong until they are there. `curl` costs one experimental segment, and
+leaves the rate percentages waiting for a reply before they refresh.
+
+Add `--probe` when `ccusage` is already installed and you want to confirm
+the cost windows will actually fill. It runs a real one-day `ccusage daily
+--json` and checks for the `period` field the refresher reads, which is the
+only reliable answer: the field name is not a documented function of the
+version. It costs several seconds, so it is opt-in.
+
+A `probe ccusage_schema fail` is not a separate thing to handle: the
+`dep ccusage` record is reported `old` in that case, with an upgrade command
+in its fix column, so step 2 below already acts on it. An installed binary
+answering with a schema the refresher cannot read leaves the cost windows
+just as empty as no binary at all.
 
 Drop `--porcelain` for a human-readable table when the user asked to see
 the state of their machine rather than have it fixed.
@@ -102,10 +112,10 @@ One question, single select, two options, never a menu and never one
 question per dependency:
 
 - Option 1: install every `run` record. The label is short, five words at
-  most, and ends with `(Recommended)`, for example `Install jq and curl
+  most, and ends with `(Recommended)`, for example `Install jq and ccusage
   (Recommended)`. The `description` is where the user reads what is about
   to land on their machine: every name with its version and channel, for
-  example `jq 1.7.1 via apt-get, curl 8.5.0 via apt-get`.
+  example `jq 1.7.1 via apt-get, ccusage 20.0.20 via npm`.
 - Option 2: `Skip`, install nothing.
 
 A `?` in the version column means the channel would not say (offline, or a
@@ -115,7 +125,7 @@ rather than leaving the version out.
 If the user agrees, run exactly the names they agreed to:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/skills/nutshell-setup/scripts/nutshell-install-deps.sh" --apply jq curl
+bash "${CLAUDE_PLUGIN_ROOT}/skills/nutshell-setup/scripts/nutshell-install-deps.sh" --apply jq ccusage
 ```
 
 It prints `+ <command>` before each install, re-reads the doctor afterwards,
@@ -148,6 +158,8 @@ If the user declines, that is a complete answer. Continue with the install
 and report what stays off, using the doctor's `<cost if absent>` column:
 
 - no `jq`: the statusline cannot run at all.
+- no `ccusage`: today / weekly / monthly / all-time stay empty, and
+  `nutshell-reset-all-time-cost` is unavailable.
 - no `claude` on `PATH`: the rate row can show a 0% window it should have
   left out.
 - no `curl`: the per-model weekly window (the experimental `fable` segment)
@@ -166,12 +178,10 @@ The script is idempotent, silent, and always exits 0. It creates the
 directories, migrates a pre-0.3.1 install (moves the config, state files
 and extra ledgers from `~/.claude/` into `nutshell/`, deletes the old
 lock files, and deletes the old scripts only once every new file is in
-place), copies each of the five files into `bin/` when it is missing or
-differs from the bundled copy, deletes a `bin/` script an older version
-installed that is no longer shipped, and registers
+place), copies each of the six files into `bin/` when it is missing or
+differs from the bundled copy, and registers
 `"statusLine": {"type": "command", "command": "bash ~/.claude/nutshell/bin/statusline.sh", "refreshInterval": 1}`
-in `~/.claude/settings.json` (`"refreshInterval": 5` on Windows, where a
-render costs ~150ms of process creation against ~1ms elsewhere). It skips the registration when
+in `~/.claude/settings.json`. It skips the registration when
 `config.json` says `"disabled": true` (the user made the statusline
 inactive on purpose), when `settings.json` registers a statusline that
 is not ours, or when `settings.json` cannot be parsed or repaired. It
@@ -180,7 +190,7 @@ never touches `config.json` or anything under `state/`, and never writes a
 
 ### 4. Check the result yourself, since the script reports nothing
 
-- `ls ~/.claude/nutshell/bin/` must list all five files.
+- `ls ~/.claude/nutshell/bin/` must list all six files.
 - `jq -r '.statusLine.command // "none"' ~/.claude/settings.json` must
   print `bash ~/.claude/nutshell/bin/statusline.sh`, with three
   exceptions to report rather than fix: `config.json` has
@@ -189,6 +199,42 @@ never touches `config.json` or anything under `state/`, and never writes a
   line; do not replace it), or `settings.json` is not a JSON object
   (the script repairs a BOM, comments, a trailing comma or a non-object
       by itself, and leaves anything else alone until it is valid again).
+
+### 5. Prove the cost line end to end, if ccusage was just installed
+
+`command -v ccusage` only proves the binary is on *your* `PATH`. Run the
+real refresher once, in the foreground, and check what it wrote:
+
+```bash
+bash ~/.claude/nutshell/bin/cost_cache_refresh.sh
+jq -e 'has("today_cost") and has("weekly_cost") and has("monthly_cost") and has("all_time_cost")' \
+  ~/.claude/nutshell/state/cost_cache.json
+```
+
+The first run has no ledger to scan from, so it reads every transcript and
+takes several seconds. That is expected, and only the first run.
+
+This run inherits your `PATH`, which is the one thing it cannot prove. The
+statusline spawns its own refresher, and a `ccusage` under a prefix that
+Claude Code's `PATH` lacks (a user-local npm prefix is the usual one) passes
+this check and still leaves the cost line empty, which is the exact symptom
+this whole step exists to rule out. So confirm the *spawned* refresher runs
+too, by watching the cache be rewritten again without you:
+
+```bash
+before=$(jq -r .updated_at ~/.claude/nutshell/state/cost_cache.json)
+# wait for the next turn to finish, then:
+jq -r --argjson b "$before" 'if .updated_at > $b then "spawned refresh ok" else "still \($b): the statusline cannot reach ccusage" end' \
+  ~/.claude/nutshell/state/cost_cache.json
+```
+
+Wait for the next turn to finish. The plugin's `Stop` hook refreshes the
+cache within 10s of a turn ending, under Claude Code's own environment,
+which is exactly the spawned path this is meant to prove, so the answer
+comes one turn later rather than after minutes of idling. If you are not
+going to wait for it, say so rather than reporting a clean bill of health:
+tell the user the foreground run passed and that a `ccusage` outside Claude
+Code's `PATH` would still leave the row empty.
 
 ## How to answer
 
@@ -224,10 +270,13 @@ Per outcome:
 - `dep jq` is `missing` and the user declined: "Without `jq` the statusline
   cannot run at all. Install it with `<fix>` when you want it back." Stop
   rather than running the sync, which would exit 0 having done nothing.
-- `dep claude` or `dep curl` is `missing` and the user declined: finish
+- `dep ccusage` or `dep claude` is `missing` and the user declined: finish
   the install, then one line per gap taken from its `<cost if absent>`
   column. No warning tone, a decline is a complete answer, and the rest of
   the statusline works.
+- `dep ccusage` is `old`, or `probe ccusage_schema fail`: "`ccusage` is
+  installed but too old for the refresher to read, so today, weekly, monthly
+  and all-time stay empty. Upgrade it with `<fix>`."
 - Registration skipped because `config.json` says `"disabled": true`: "The
   scripts are up to date. The statusline is inactive on purpose, so it was
   not registered. Run `/nutshell:nutshell-active` to bring it back."
@@ -241,6 +290,10 @@ Per outcome:
   this again." The silent repair covers a BOM, `//` and `/* */` comments, a
   trailing comma, and a file that is valid JSON but not an object; anything
   else needs the user.
+- Step 5 ran and the spawned refresh was not waited for: say the foreground
+  run passed and that a `ccusage` outside Claude Code's own `PATH` would
+  still leave the cost row empty. Do not report a clean bill of health you
+  did not verify.
 - The doctor itself cannot run (missing, or non-zero with no records): say
   which path you tried, then run the sync anyway and report its result. The
   doctor is a report, not a gate: only a missing `jq` or `bash` stops the

@@ -26,12 +26,7 @@ for d in "${_dirs[@]}"; do
   for f in "$d"/*; do
     [ -x "$f" ] && [ ! -d "$f" ] || continue
     b=${f##*/}
-    # With the Windows suffix stripped before the match, so that `flock.exe`
-    # and `timeout.exe` are left out of the mirror too. Otherwise the "shim"
-    # half of every suite runs against the real binaries on Git for Windows
-    # and tests the same path twice.
-    case "$b" in *.exe|*.EXE|*.cmd|*.CMD|*.bat|*.BAT|*.com|*.COM|*.ps1|*.PS1) n=${b%.*} ;; *) n=$b ;; esac
-    case "$n" in flock|timeout) continue ;; esac
+    case "$b" in flock|timeout) continue ;; esac
     [ -e "$MIRROR/$b" ] || ln -s "$f" "$MIRROR/$b" 2>/dev/null
   done
 done

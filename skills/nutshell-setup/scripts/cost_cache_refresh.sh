@@ -79,10 +79,6 @@ merge_days() {  # a b op
 # ---------------------------------------------------------------------------
 
 take_lock
-# Debris of renders Claude Code killed between a write and its rename.
-# Swept from here, and from the other two refreshers, because all three are
-# background work: the render path cannot afford the fork.
-nut_sweep_write_temps
 command -v ccusage >/dev/null 2>&1 || exit 0
 
 today=$(date +%Y-%m-%d)

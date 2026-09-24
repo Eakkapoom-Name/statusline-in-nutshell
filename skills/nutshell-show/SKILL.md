@@ -1,6 +1,6 @@
 ---
 name: nutshell-show
-description: Turn on one part of the nutshell statusline (session, cost or workspace) or all three at once. The model line is always on. Use when the user asks to show, display, enable or bring back a statusline section. Emoji labels are a separate switch, handled by the nutshell-emoji skill.
+description: Turn on one line of the nutshell statusline (session, cost or workspace) or all three at once. The model line is always on. Use when the user asks to show, display, enable or bring back a statusline section. Emoji labels are a separate switch, handled by the nutshell-emoji skill.
 argument-hint: "[all|session|cost|workspace]"
 ---
 

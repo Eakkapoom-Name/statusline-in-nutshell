@@ -21,7 +21,7 @@ This is not the same as hiding: inactive removes the registration from
 settings.json so Claude Code shows its own footer, while the nutshell-hide
 skill keeps the registration, which leaves that footer suppressed and line 1
 rendering. Inactive also stops the tracking: `statusline.sh` exits before
-printing anything or spawning the background auth and usage probes, so
+printing anything or spawning the background cost refresh and auth probe, so
 a session that still holds the old registration stops doing that work at
 once rather than waiting on a restart. The choice is
 remembered, so the sync hook will not put the statusline back at the next

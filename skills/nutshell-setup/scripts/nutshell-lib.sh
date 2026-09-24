@@ -20,21 +20,6 @@
 LC_ALL=C
 export LC_ALL
 
-# File mode pin, and it is load-bearing rather than tidy. Every atomic write
-# in this file used to draw its temp file from `mktemp`, which creates at
-# 0600, and a rename carries that mode to the target: settings.json, the
-# caches and the config all ended up private to the user without anyone
-# saying so. The temp file is now a plain redirection, which would create at
-# 0666 & ~umask - 0644 on a default Linux or macOS box - and settings.json
-# can carry an `env` block with an ANTHROPIC_API_KEY in it. So the umask
-# says what the mktemp used to say, for every file and directory any of
-# these scripts create.
-#
-# A builtin, so it costs nothing on the render path, which is the whole
-# reason the mktemp could go. Windows is unaffected either way: the MSYS
-# layer reports 0644 for everything and the real permissions are ACLs.
-umask 077
-
 # ---------------------------------------------------------------------------
 # Paths. Everything this plugin owns lives under ~/.claude/nutshell/ (since
 # 0.3.1). Only settings.json and .credentials.json are read from ~/.claude
@@ -47,51 +32,28 @@ NUT_STATE_DIR="$NUT_DIR/state"
 NUT_LOCK_DIR="$NUT_DIR/locks"
 NUT_CONFIG="$NUT_DIR/config.json"
 
-# The three cost files and the extra ledgers below belong to the ccusage cost
-# windows, retired in favour of the payload's own session cost (the code is
-# in archived/). Nothing writes or reads them any more. The paths stay so
-# that `uninstall --purge` can still sweep what an older version left, and
-# so that rmdir of state/ and locks/ is not defeated by a leftover.
 NUT_COST_CACHE="$NUT_STATE_DIR/cost_cache.json"
 NUT_COST_LEDGER="$NUT_STATE_DIR/cost_ledger.json"
 NUT_COST_BASELINE="$NUT_STATE_DIR/cost_baseline.json"
-# The freshest five_hour and seven_day reading from any tab, shared by all
-# of them. Written only by statusline.sh.
-NUT_SHARED_RATE_LIMIT_CACHE="$NUT_STATE_DIR/shared_rate_limit_cache.json"
+NUT_RATE_CACHE="$NUT_STATE_DIR/rate_cache.json"
 NUT_AUTH_CACHE="$NUT_STATE_DIR/auth_cache.json"
-# The account usage endpoint reading: five_hour, seven_day and the per-model
-# weekly windows. Written only by account_usage_cache_refresh.sh, the one job
-# in this plugin that touches the network.
-NUT_ACCOUNT_USAGE_CACHE="$NUT_STATE_DIR/account_usage_cache.json"
+# Per-model weekly windows from the account usage endpoint. Written only by
+# usage_cache_refresh.sh, the one job in this plugin that touches the network.
+NUT_USAGE_CACHE="$NUT_STATE_DIR/usage_cache.json"
 # Extra per-source ledgers written by other tools: ${NUT_EXTRA_LEDGER_PREFIX}<source>.json
 NUT_EXTRA_LEDGER_PREFIX="$NUT_STATE_DIR/ledger_"
 
 NUT_SYNC_LOCK="$NUT_LOCK_DIR/sync.lock"
 NUT_COST_LOCK="$NUT_LOCK_DIR/cost_cache.lock"
 NUT_AUTH_LOCK="$NUT_LOCK_DIR/auth_cache.lock"
-NUT_ACCOUNT_USAGE_LOCK="$NUT_LOCK_DIR/account_usage_cache.lock"
-
-# The names the two caches and their lock had through 0.3.6. sync.sh renames
-# the files once the current scripts are installed (nut_migrate_renamed_state),
-# and uninstall --purge sweeps these too, for an install that never re-synced.
-NUT_OLD_RATE_CACHE="$NUT_STATE_DIR/rate_cache.json"
-NUT_OLD_USAGE_CACHE="$NUT_STATE_DIR/usage_cache.json"
-NUT_OLD_USAGE_LOCK="$NUT_LOCK_DIR/usage_cache.lock"
+NUT_USAGE_LOCK="$NUT_LOCK_DIR/usage_cache.lock"
 
 NUT_SETTINGS="$NUT_CLAUDE_DIR/settings.json"
 NUT_CREDENTIALS="$NUT_CLAUDE_DIR/.credentials.json"
-# Claude Code's own cache of the server model catalog, one file per account
-# (plus stale ones from accounts or orgs used before). Read-only for us, and
-# undocumented, so every reader must survive it being absent or reshaped.
-NUT_MODEL_CATALOG_DIR="$NUT_CLAUDE_DIR/cache/model-catalog"
 
 # The scripts installed into bin/, in install order. This library goes
 # first so no script ever lands before the file it sources.
-NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh auth_cache_refresh.sh account_usage_cache_refresh.sh"
-# Scripts earlier versions installed into bin/ and this one no longer does.
-# sync.sh deletes them once every current script is in place, and uninstall
-# deletes them too, or its rmdir of bin/ fails on an upgraded install.
-NUT_RETIRED_BIN_FILES="cost_cache_refresh.sh usage_cache_refresh.sh"
+NUT_INSTALLED_FILES="nutshell-lib.sh statusline.sh statusline-toggle.sh cost_cache_refresh.sh auth_cache_refresh.sh usage_cache_refresh.sh"
 
 # The settings.json registration. This is the only copy: sync.sh, the setup
 # skill (which runs sync.sh) and statusline-toggle.sh all register from it,
@@ -100,31 +62,9 @@ NUT_RETIRED_BIN_FILES="cost_cache_refresh.sh usage_cache_refresh.sh"
 # refreshInterval is required, not cosmetic. Claude Code re-runs the command
 # on a few events (session start, a new assistant message, /compact, a
 # permission-mode change) and otherwise not at all, so every segment read
-# from disk rather than from the stdin payload (advisor, rate and usage caches)
-# would sit stale while the session idles. The timer re-runs it on a clock.
-#
-# The interval is 1s everywhere except Windows, where it is 5s. That is not
-# a taste call, it is the arithmetic of the platform: a render is ~1ms of
-# process creation on Linux and macOS and ~150ms under the Cygwin bash Git
-# for Windows ships, because every fork in it costs ~40ms there. At 1Hz
-# that is a tenth of a core per open session doing nothing but restarting
-# processes, and the maintainer measured 69 distinct bash/jq/conhost pids
-# in five seconds across six sessions, sustained, with Defender scanning
-# each image. 5s divides all of that by five and costs at most five
-# seconds of lag on the three clock-driven fields, none of which can move
-# faster than their own caches anyway: the usage windows sit behind a
-# 300s gate, and everything from the payload - model, context, session
-# cost - still repaints on the event, not on the timer.
-#
-# $OSTYPE, not `uname`: this file is sourced by the render, and a fork here
-# would be the very cost being avoided. Bash sets it at compile time, to
-# "msys" or "cygwin" for the Windows builds and never for a Linux or macOS
-# one, so those two platforms keep the 1s they have always had.
-case "$OSTYPE" in
-  msys*|cygwin*|win32*) NUT_REFRESH_INTERVAL=5 ;;
-  *)                    NUT_REFRESH_INTERVAL=1 ;;
-esac
-NUT_STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/nutshell/bin/statusline.sh","refreshInterval":'"$NUT_REFRESH_INTERVAL"'}'
+# from disk rather than from the stdin payload (advisor, cost, rate cache)
+# would sit stale while the session idles. A 1s timer re-runs it on a clock.
+NUT_STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/nutshell/bin/statusline.sh","refreshInterval":1}'
 
 # ---------------------------------------------------------------------------
 # The pre-0.3.1 layout, when all of this sat loose in ~/.claude. Needed by
@@ -132,8 +72,7 @@ NUT_STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/nutshell/bin/s
 # that was never migrated.
 # ---------------------------------------------------------------------------
 NUT_OLD_CONFIG="$NUT_CLAUDE_DIR/statusline.config.json"
-# State files: the new name is the old one without its leading dot. The
-# rate cache then gets its current name from nut_migrate_renamed_state.
+# State files: the new name is the old one without its leading dot.
 NUT_OLD_STATE_FILES=".cost_cache.json .cost_ledger.json .cost_baseline.json .rate_cache.json .auth_cache.json"
 NUT_OLD_LOCK_FILES=".cost_cache.lock .auth_cache.json.lock .statusline-sync.lock"
 NUT_OLD_SCRIPTS="statusline.sh statusline-toggle.sh cost_cache_refresh.sh"
@@ -171,46 +110,15 @@ nut_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
-# The temp name every atomic write below uses: the target with the writing
-# process's own pid appended.
-#
-# It replaces a `mktemp "$target.XXXXXX"`, which cost a fork for a property
-# the pid already has. What the name must guarantee is that no two writers
-# running at once share it - stock macOS has no flock, so two refreshers
-# really can overlap - and no two live processes share a pid. A leftover
-# from a process that died with this pid is truncated rather than
-# respected, which is right: nothing is reading it.
-#
-# One caveat for a future caller: a subshell inherits its parent's $$, so
-# two concurrent subshells of the SAME script must not write the same
-# target. Nothing here does - every concurrent writer in the plugin is a
-# separate process, spawned by nut_spawn or started by Claude Code - and
-# $BASHPID, which would tell them apart, is bash 4 while the floor here is
-# the 3.2 that stock macOS ships.
-#
-# The fork this saves is the expensive kind on Windows, where process
-# creation is ~40ms against ~1ms on Linux and macOS, and one of these
-# writes sits on the render path (the rate cache). Dropping it is free
-# everywhere and worth roughly a quarter of a Windows render.
-#
-# Not for a file that holds a secret: a predictable name is a symlink
-# target a second local user could plant. The one such file, the usage
-# probe's auth header, keeps its mktemp.
-nut_tmp_for() {
-  NUT_TMP="${1}.$$"
-}
-
 # Write $1 (text, no trailing newline added) to file $2 atomically: a
-# same-directory temp file, then a rename. Same directory, not the default
+# same-directory mktemp, then a rename. Same directory, not the default
 # /tmp, so the mv is a same-filesystem rename a concurrent reader cannot
-# catch half-written. Returns 1 with the temp file removed on any failure.
+# catch half-written; a unique temp name, not a fixed "$target.tmp", so two
+# writers running at once (stock macOS has no flock) cannot truncate each
+# other's file. Returns 1 with the temp file removed on any failure.
 nut_write_atomic() {
   local content="$1" target="$2" tmp
-  # An empty target would put the temp file in the working directory. It can
-  # only happen when a script from one version sources the library of
-  # another that renamed the path variable (a sync swapping files mid-render).
-  [ -n "$target" ] || return 1
-  nut_tmp_for "$target"; tmp="$NUT_TMP"
+  tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
   if printf '%s' "$content" > "$tmp" 2>/dev/null && mv "$tmp" "$target" 2>/dev/null; then
     return 0
   fi
@@ -222,15 +130,12 @@ nut_write_atomic() {
 # ledger or cache from being truncated, or replaced with garbage, when an
 # upstream jq step silently produced empty or malformed output: rejected
 # content leaves the existing file untouched and returns 0 (there was
-# nothing to write). Only a failed write or rename returns 1, so a caller
-# can tell "nothing to write" from "the write did not land".
+# nothing to write). Only a failed mktemp or rename returns 1, which is
+# what `reset-all-time` reads as "the reset did not land".
 nut_write_json_object() {
   local content="$1" target="$2" tmp
-  [ -n "$target" ] || return 1
-  nut_tmp_for "$target"; tmp="$NUT_TMP"
-  # A temp file that cannot even be created is the old failed-mktemp case,
-  # and the caller has to hear about it.
-  printf '%s' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
+  printf '%s' "$content" > "$tmp" 2>/dev/null
   if [ -s "$tmp" ] && jq -e 'type == "object"' "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$target" 2>/dev/null
   else
@@ -246,35 +151,12 @@ nut_write_json_object() {
 nut_jq_edit() {
   local target="$1" tmp
   shift
-  nut_tmp_for "$target"; tmp="$NUT_TMP"
+  tmp=$(mktemp "${target}.XXXXXX" 2>/dev/null) || return 1
   if jq "$@" "$target" > "$tmp" && mv "$tmp" "$target" 2>/dev/null; then
     return 0
   fi
   rm -f "$tmp" 2>/dev/null
   return 1
-}
-
-# Delete the write temporaries a killed process left behind in the state
-# directory: both the "<cache>.json.<pid>" this library writes now and the
-# "<cache>.json.XXXXXX" that older versions drew from mktemp.
-#
-# They are debris, not a design flaw to trap our way out of. Claude Code
-# cancels an in-flight statusline whenever a new update triggers, and a
-# process killed between its write and its rename runs no trap on the way
-# out - the rename is the only thing that was ever going to remove the
-# file. On the maintainer's Windows box that left 39 of them, the oldest
-# ten days old, and the count was still climbing.
-#
-# A write takes milliseconds, so ten minutes of age says the writer is
-# gone; a live writer's file is never in range. One fork, and the callers
-# are the background refreshers alone, which run behind a 300s gate. The
-# render path must never call this. `-mmin` and `-delete` are in both GNU
-# and BSD find, so Linux, macOS and Git for Windows all take this path.
-nut_sweep_write_temps() {
-  [ -d "$NUT_STATE_DIR" ] || return 0
-  find "$NUT_STATE_DIR" -maxdepth 1 -type f -name '*.json.*' -mmin +10 \
-    -delete 2>/dev/null
-  return 0
 }
 
 # Start a background job that outlives this script and is never awaited.
@@ -321,16 +203,15 @@ nut_spawn() {
 # ---------------------------------------------------------------------------
 
 # Seconds after which a held lock is treated as abandoned. Per call site,
-# because the jobs differ: the sync hook and the auth probe are seconds.
-# NUT_LOCK_STALE_COST was sized for the retired ccusage refresher (a full
-# rescan was 5 to 14s, a reset capped at 90) and is kept as the default
-# for nut_lock_acquire and nut_lock_wait when a caller names none.
+# because the jobs differ by two orders of magnitude: the sync hook and the
+# auth probe are seconds, a full ccusage rescan is 5 to 14 and a
+# reset-all-time is capped at 90.
 NUT_LOCK_STALE_SYNC=60
 NUT_LOCK_STALE_AUTH=60
 NUT_LOCK_STALE_COST=120
 # One HTTP call under an 8s curl limit inside a 15s nut_timeout, so a holder
 # still on its feet after 60s is a dead one.
-NUT_LOCK_STALE_ACCOUNT_USAGE=60
+NUT_LOCK_STALE_USAGE=60
 
 # Try to take lock $1, whose holder is stale after $2 seconds. Returns 0
 # with the lock held and an EXIT trap set to release it, 1 when someone
@@ -374,10 +255,8 @@ nut_lock_acquire() {
 }
 
 # Wait for lock $1 (stale after $2 seconds) for at most $3 seconds, then
-# give up and return 1. For a job that must not be silently skipped the way
-# a background refresh is. Its one caller, reset-all-time, was retired with
-# the ccusage cost windows (archived/); the helper stays, and t_shim.sh
-# still covers it. The retry interval is a whole
+# give up and return 1. Used by reset-all-time, which must not be silently
+# skipped the way a background refresh is. The retry interval is a whole
 # second: POSIX sleep promises no fractions and bash 3.2 is the floor.
 nut_lock_wait() {
   local lock="$1" stale="${2:-$NUT_LOCK_STALE_COST}" max="${3:-120}" waited=0
@@ -669,19 +548,4 @@ nut_migrate_legacy_layout() {
   for f in $NUT_OLD_LOCK_FILES; do
     rm -f "$NUT_CLAUDE_DIR/$f" 2>/dev/null
   done
-}
-
-# Give the two caches the names they took after 0.3.6 (rate_cache.json and
-# usage_cache.json before). Run by sync.sh only once every current script is
-# in bin/: until then the old scripts are the working install and still read
-# the old names. An old file left beside a new one (a render already in
-# flight when the scripts were swapped) is deleted rather than merged. Both
-# are caches that the next render or probe rewrites, so nothing is lost.
-# The old lock goes too: nothing takes it any more, and an old refresher
-# that still holds it releases it with an rm of its own.
-nut_migrate_renamed_state() {
-  nut_migrate_one "$NUT_OLD_RATE_CACHE" "$NUT_SHARED_RATE_LIMIT_CACHE"
-  nut_migrate_one "$NUT_OLD_USAGE_CACHE" "$NUT_ACCOUNT_USAGE_CACHE"
-  rm -f "$NUT_OLD_RATE_CACHE" "$NUT_OLD_USAGE_CACHE" \
-        "$NUT_OLD_USAGE_LOCK" "$NUT_OLD_USAGE_LOCK.held" 2>/dev/null
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# account_usage_cache_refresh.sh: background probe of the account usage endpoint,
-# feeding ~/.claude/nutshell/state/account_usage_cache.json.
+# usage_cache_refresh.sh: background probe of the account usage endpoint,
+# feeding ~/.claude/nutshell/state/usage_cache.json.
 #
-# Usage: account_usage_cache_refresh.sh <claude_code_version>
+# Usage: usage_cache_refresh.sh <claude_code_version>
 #
 # The stdin payload Claude Code hands the statusline carries exactly two
 # rate-limit windows, five_hour and seven_day. Per-MODEL weekly windows (the
@@ -69,11 +69,7 @@ nut_ensure_dirs
 
 # Non-blocking, like the auth probe: a second session skips this round
 # rather than queueing behind it.
-nut_lock_acquire "$NUT_ACCOUNT_USAGE_LOCK" "$NUT_LOCK_STALE_ACCOUNT_USAGE" || exit 0
-
-# See nut_sweep_write_temps: killed renders leave write temporaries behind,
-# and the background refreshers are the ones that can afford to clear them.
-nut_sweep_write_temps
+nut_lock_acquire "$NUT_USAGE_LOCK" "$NUT_LOCK_STALE_USAGE" || exit 0
 
 token=$(jq -r '.claudeAiOauth.accessToken // empty' "$NUT_CREDENTIALS" 2>/dev/null)
 [ -n "$token" ] || exit 0
@@ -162,10 +158,10 @@ if [ -z "$new" ]; then
       windows_at: ((.windows_at | numbers) // 0),
       models:  ((.models? | objects) // {}),
       windows: ((.windows? | objects) // {})}' \
-    "$NUT_ACCOUNT_USAGE_CACHE" 2>/dev/null) \
+    "$NUT_USAGE_CACHE" 2>/dev/null) \
     || new=""
   [ -n "$new" ] || new="{\"updated_at\":$now,\"windows_at\":0,\"models\":{},\"windows\":{}}"
 fi
 
-nut_write_json_object "$new" "$NUT_ACCOUNT_USAGE_CACHE"
+nut_write_json_object "$new" "$NUT_USAGE_CACHE"
 exit 0

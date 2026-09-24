@@ -27,7 +27,7 @@ dollar sign followed by a zero), there is no argument.
 Two themes: `orange` (`#D97757`, the default, and what a fresh install
 starts on) and `blue` (`#8AB4F8`). The color applies to every value the row
 draws in the accent: the model name, the advisor, the context counts and
-the filled half of its bar, the session cost, the rate percentages and
+the filled half of its bar, every cost figure, the rate percentages and
 their reset times, and the location. Labels, separators and punctuation
 stay in the default foreground either way, and the five per-effort colors
 (yellow, green, periwinkle, lavender, orange) are unchanged: max effort

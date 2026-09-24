@@ -23,20 +23,21 @@ little more room on the same line:
 The `fable` segment is the per-model weekly window, the one Claude Code's own
 `/usage` dialog calls "Current week (Fable)". It is experimental, and it
 appears only on an account that has such a window: no row, no placeholder,
-nothing to switch off. The current session's cost is off on a new install;
-switch it on and it joins the row after the rate windows, as `cost: 1.24$`
-(or `🪙 1.24$` with icons).
+nothing to switch off. Simple carries no spend at all, whatever the cost part
+says, since the five cost windows are a detail-layout row.
 
 When you would rather see the whole picture, `detail` spreads the same
-information across three lines and adds what simple leaves behind. Line 1
+information across four lines and adds what simple leaves behind. Line 1
 carries the model, effort level, advisor and context usage, this time with a
 progress bar. Line 2 shows the rate limits with the clock time each window
-resets at, followed by the current session's cost, and line 3 says where you
-are: the directory, the repository and the git branch.
+resets at. Line 3 opens the spend out into today, this week, this month and
+all time, and line 4 says where you are: the directory, the repository and
+the git branch.
 
 ```
 model: Sonnet 5 (high) | advisor: Opus 5 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
-5 hours session: 42% used (6:20pm) | weekly session: 18% used (Jul 27, 9:00pm) | weekly fable: 61% used (Jul 27, 9:00pm) | cost: 1.24$
+5 hours session: 42% used (6:20pm) | weekly session: 18% used (Jul 27, 9:00pm) | weekly fable: 61% used (Jul 27, 9:00pm)
+current session: 1.24$ | today: 3.87$ | weekly: 12.50$ | monthly: 41.02$ | all-time: 210.33$
 workspace: ~/Documents/statusline-in-nutshell | repo: Eakkapoom-Name/statusline-in-nutshell | branch: main
 ```
 
@@ -44,12 +45,10 @@ Emoji labels work the same way here:
 
 ```
 💡 Sonnet 5 (high) | 🎓 Opus 5 | ⏳ 412.0k/1.0m tokens [████░░░░░░] 41% used
-🕐 42% used (6:20pm) | 🔄 18% used (Jul 27, 9:00pm) | ⚡ 61% used (Jul 27, 9:00pm) | 🪙 1.24$
+🕐 42% used (6:20pm) | 🔄 18% used (Jul 27, 9:00pm) | ⚡ 61% used (Jul 27, 9:00pm)
+🪙 1.24$ | ⛅ 3.87$ | 📅 12.50$ | 🧾 41.02$ | 💳 210.33$
 📂 ~/Documents/statusline-in-nutshell | 🌐 Eakkapoom-Name/statusline-in-nutshell | 🌿 main
 ```
-
-The cost is the figure Claude Code itself hands the statusline for the
-current session, so nothing is scanned or estimated to produce it.
 
 Both layouts draw their values in one accent color, orange by default, and
 [`/nutshell:nutshell-color`](#nutshellnutshell-color) swaps it for a blue one.
@@ -59,14 +58,14 @@ Both layouts draw their values in one accent color, orange by default, and
 - [`/nutshell:nutshell-setup`](#nutshellnutshell-setup) installs or repairs
   the scripts and the registration.
 - [`/nutshell:nutshell-mode`](#nutshellnutshell-mode) moves between the
-  one-line simple layout a new install starts on and the three-line detail
+  one-line simple layout a new install starts on and the four-line detail
   one.
 - [`/nutshell:nutshell-color`](#nutshellnutshell-color) switches the accent
   every value is drawn in between the orange theme and a blue one.
 - [`/nutshell:nutshell-status`](#nutshellnutshell-status) prints what is on
   and what is off.
 - [`/nutshell:nutshell-show`](#nutshellnutshell-show) turns the session, cost
-  or workspace part on, one at a time or all three at once. Cost starts off
+  or workspace line on, one at a time or all three at once. Cost starts off
   on a new install, so this is how you ask for it.
 - [`/nutshell:nutshell-hide`](#nutshellnutshell-hide) turns them off again,
   in either layout. The model part stays whatever you do, so the row never
@@ -77,6 +76,8 @@ Both layouts draw their values in one accent color, orange by default, and
   your line settings intact.
 - [`/nutshell:nutshell-inactive`](#nutshellnutshell-inactive) hands the row
   back to Claude Code and stops the work behind it.
+- [`/nutshell:nutshell-reset-all-time-cost`](#nutshellnutshell-reset-all-time-cost)
+  wipes the all-time cost counter.
 - [`/nutshell:nutshell-uninstall`](#nutshellnutshell-uninstall) removes both.
 
 ## Notice
@@ -86,6 +87,9 @@ Both layouts draw their values in one accent color, orange by default, and
   two tools stock macOS does not ship, `flock` and `timeout`, are carried by
   the plugin itself as of 0.3.4, so Linux, macOS and Windows all get the same
   locking and the same hang guard.
+- Empty today, weekly, monthly or all-time fields mean `ccusage` is missing or
+  too old, on any OS. Run [`/nutshell:nutshell-setup`](#nutshellnutshell-setup):
+  its dependency check names the gap and the command that closes it.
 - WSL is still under development. Some functions may be incompatible.
 
 ## Requirement
@@ -97,6 +101,13 @@ which one is missing.
 - **`jq`** 1.6 or newer\
   Everything here reads and writes its JSON through it.
   The toggle script stops with a clear error if it is missing.
+- **`ccusage`**\
+  Fills in today, weekly, monthly and all-time cost, and makes
+  `nutshell-reset-all-time-cost` available. Without it, only the current
+  session's cost shows.
+  - A release too old to report the `period` field leaves those windows just
+    as empty. The setup check can run a real one-day query to confirm yours
+    works.
 - **`claude` on your `PATH`**\
   Runs the background probe that decides whether your account has rate limits
   at all. Without it, the rate windows can show a 0% row they should have
@@ -114,11 +125,11 @@ which one is missing.
 
 `flock` and `timeout` were listed here through 0.3.3 and you no longer need
 either. The plugin serialises its own background refreshes with a lock file
-it manages itself, and cuts a hung probe short with its own watcher. Where
-GNU `timeout` happens to be installed it is still used, since it needs no
-extra processes, and it is recognised by asking it for its version rather
-than by its name alone: the bash that Git for Windows ships carries Windows'
-own unrelated `timeout.exe` on its `PATH`.
+it manages itself, and cuts a hung probe or a hung reset short with its own
+watcher. Where GNU `timeout` happens to be installed it is still used, since
+it needs no extra processes, and it is recognised by asking it for its
+version rather than by its name alone: the bash that Git for Windows ships
+carries Windows' own unrelated `timeout.exe` on its `PATH`.
 
 ## Install
 
@@ -155,7 +166,7 @@ a new install leaves it until you ask for it.
 ## Usage
 
 Type the command for what you want, or just describe it in plain language:
-"hide the cost", "show everything", "turn on emoji", "what's showing?".
+"hide the cost line", "show everything", "turn on emoji", "what's showing?".
 Each command has its own description, so a plain request lands on the right
 one.
 
@@ -202,9 +213,12 @@ argument at all it toggles to whichever one you are not on. A new install
 starts on `simple`, while an install older than 0.3.4 stays on `detail`, so
 an upgrade never changes the row under you.
 
-Simple drops the context bar and the clock time each window resets at, which
-is what lets the rest fit on one line. Parts behave the same either way, the
-session cost included, and emoji labels apply to both.
+Simple drops the context bar, the clock time each window resets at, and every
+cost window, which is what lets the rest fit on one line. Spend is a
+detail-layout row: switching the cost part on changes nothing you can see in
+simple, though it still governs the background `ccusage` scan, so switching it
+off stops that work in either layout. Parts otherwise behave the same either
+way, and emoji labels apply to both.
 
 Switch between them:
 
@@ -218,7 +232,7 @@ Switch to the one-line layout:
 /nutshell:nutshell-mode simple
 ```
 
-Switch back to the three-line layout:
+Switch back to the four-line layout:
 
 ```bash
 /nutshell:nutshell-mode detail
@@ -232,7 +246,7 @@ does an install upgrading from a version that had no color at all, so nobody's
 row changes under them.
 
 The accent covers the model name, the advisor, the context counts and the
-filled half of its bar, the session cost, the rate percentages and their
+filled half of its bar, every cost figure, the rate percentages and their
 reset times, and the location. Labels, separators and punctuation keep the
 terminal's own foreground either way, and the five effort colors are
 untouched, max effort included: the effort scale is fixed, and a max that
@@ -274,8 +288,8 @@ always on and the accent color is deliberately not in the table.
 
 ### /nutshell:nutshell-show
 
-Turns a part back on, which means its line in `detail` (for cost, its
-segment at the end of the session line) and its segment in `simple`. It takes `all`, `session`, `cost` or `workspace`, and with no
+Turns a part back on, which means its line in `detail` and its segment in
+`simple`. It takes `all`, `session`, `cost` or `workspace`, and with no
 argument at all it turns all three on. It does not take `emoji`, which is
 [its own command](#nutshellnutshell-emoji), and it does not take `model`,
 which is always on.
@@ -286,7 +300,7 @@ Turn all three on:
 /nutshell:nutshell-show
 ```
 
-Turn on the cost only:
+Turn on the cost line only:
 
 ```bash
 /nutshell:nutshell-show cost
@@ -300,18 +314,17 @@ Turn on the workspace line only:
 
 ### /nutshell:nutshell-hide
 
-Turns a part off, with the same arguments. The registration stays in place, so
+Turns a line off, with the same arguments. The registration stays in place, so
 the row is still yours and line 1 keeps rendering.
 
 `session` is the rate-limit line, named for the 5-hour and weekly session
-limits it tracks. `cost` is the current session's spend at the end of that
-line, which stays on its own when the rate windows are hidden. `workspace` is the location line: the current directory with
+limits it tracks. `workspace` is the location line: the current directory with
 your home folder shortened to `~`, the repository parsed from the `origin`
 remote, and the branch read straight from `.git/HEAD`. Each part is
 independent, so a folder outside any repository still shows its path, and if
 none of the three resolve the line is left out rather than printed empty.
 
-Hide the cost:
+Hide the cost line:
 
 ```bash
 /nutshell:nutshell-hide cost
@@ -387,12 +400,12 @@ shows its own footer again. The choice is remembered, so the sync hook will not
 put the statusline back at the next session start.
 
 It also stops the work behind the row: `statusline.sh` exits immediately while
-inactive, printing nothing and spawning neither the background auth probe nor
-the usage probe. That covers a session that was already running when you turned
+inactive, printing nothing and spawning neither the background cost refresh nor
+the auth probe. That covers a session that was already running when you turned
 it off, in case Claude Code keeps invoking the old command until the session
 restarts.
 
-While inactive, `show`, `hide`, `emoji`, `mode` and `color` refuse to
+While inactive, `show`, `hide`, `emoji` and `reset-all-time-cost` refuse to
 run, since nothing they change would be visible. `status`, `active` and
 `uninstall` still work.
 
@@ -400,6 +413,15 @@ Hand the row back:
 
 ```bash
 /nutshell:nutshell-inactive
+```
+
+### /nutshell:nutshell-reset-all-time-cost
+
+Wipes the all-time cost counter for good. Today, weekly and monthly are untouched.
+It asks for confirmation first because there is no undo.
+
+```bash
+/nutshell:nutshell-reset-all-time-cost
 ```
 
 ### /nutshell:nutshell-uninstall
@@ -419,15 +441,15 @@ takes the command with it. Afterwards, remove the `nutshell` plugin from the
 `/plugin` menu: otherwise its `SessionStart` hook reinstalls the scripts at the
 next session.
 
-By default the uninstall keeps `config.json`, the rate-limit cache, the auth
-cache and any cost history an older version left behind. It still removes the three lock files, any loose
+By default the uninstall keeps `config.json`, your cost history, the rate-limit
+cache and the auth cache. It still removes the three lock files, any loose
 scripts left by a pre-0.3.1 install, and the `disabled` flag in the config it
 keeps, so a later reinstall does not come back inactive.
 
 Ask for a purge, or pass `--purge`, to wipe those too: the whole
-`~/.claude/nutshell/` directory goes, including the retired cost files and
-any `ledger_<source>.json` written by another tool, along with the four
-`.bak` files that versions before 0.3.1 left in `~/.claude/`. Only the `statusLine` key is removed from
+`~/.claude/nutshell/` directory goes, including any `ledger_<source>.json`
+written by another tool, along with the four `.bak` files that versions before
+0.3.1 left in `~/.claude/`. Only the `statusLine` key is removed from
 `settings.json`; the rest of the file is left alone. The directories are removed
 with `rmdir`, never a recursive delete, so anything unexpected inside survives.
 

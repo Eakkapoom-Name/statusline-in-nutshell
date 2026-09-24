@@ -6,34 +6,6 @@ this one tracks work that is NOT done: it is the list of what still needs
 running on macOS, on Windows and under WSL, and it goes stale the moment
 those tests happen. Delete or rewrite it once they do.
 
-> Update 2026-09-23: the ccusage cost windows, the `Stop` hook,
-> `cost_cache_refresh.sh` and `reset-all-time` were retired (see
-> `archived/README.md`); the only cost left is the payload's session cost.
-> Every item below that asks for a `ccusage` scan, a cost row, a reset or the
-> doctor's `--probe` no longer applies and can be skipped. The suite counts
-> in the tables are from before that change; see `docs/test-harness/README.md`.
->
-> Update 2026-09-24: the two rate caches were renamed for what they hold.
-> `state/rate_cache.json` is now `state/shared_rate_limit_cache.json`,
-> `state/usage_cache.json` is now `state/account_usage_cache.json`, and
-> `usage_cache_refresh.sh` is now `account_usage_cache_refresh.sh` (lock
-> `locks/account_usage_cache.lock`). The sync renames an existing install. The
-> names below were updated; nothing to re-verify beyond the items already listed.
->
-> Pending for the next release (found 2026-09-24, deliberately left until
-> then, not bugs in shipped code):
-> - README Uninstall: "keeps config.json, the rate-limit cache, the auth
->   cache" leaves out the account usage cache, and "removes the three lock
->   files" is out of date (every lock goes, bare and `.held`, 0.3.6 name too).
-> - `statusline-toggle.sh` non-purge uninstall message says "rate cache" and
->   leaves out the account usage cache. Same fix as the README line.
-> - A non-purge uninstall removes the pre-0.3.1 `~/.claude/.statusline-sync.lock`
->   but leaves `.cost_cache.lock` and `.auth_cache.json.lock` for `--purge`,
->   against its own "locks go in both paths" rule. Add a test with the fix.
-> - Release notes for `gh release create`: payload-only cost on the session
->   row, three-row detail, reset skill and `Stop` hook removed, ccusage no
->   longer a dependency, advisor names from the model catalog, caches renamed.
-
 ## What shipped in 0.3.4
 
 Three things, all on `main`:
@@ -66,7 +38,7 @@ All on `main`, none of it tagged, and every item below is Linux-only so far:
    line 2 and cost is line 3. `show`, `hide` and `status` follow that order,
    and the cost labels are `weekly:` and `monthly:`.
 3. **A per-model weekly window** (the `fable` segment), experimental. A
-   sixth installed script, `account_usage_cache_refresh.sh`, probes
+   sixth installed script, `usage_cache_refresh.sh`, probes
    `https://api.anthropic.com/api/oauth/usage` with the token from
    `~/.claude/.credentials.json`, passed to curl through a 0600 `-K` config
    file rather than argv. Omitted entirely when there is no such window.
@@ -141,8 +113,8 @@ Then the 0.3.5 surfaces, none of which has ever run on a Mac:
 
 - **The per-model weekly window will be absent, and that is correct.** macOS
   keeps its OAuth credentials in the Keychain, so `~/.claude/.credentials.json`
-  usually does not exist and `account_usage_cache_refresh.sh` exits before it probes.
-  Confirm the row is simply missing and that no `state/account_usage_cache.json` is
+  usually does not exist and `usage_cache_refresh.sh` exits before it probes.
+  Confirm the row is simply missing and that no `state/usage_cache.json` is
   written, rather than a 0% segment or an error. If the file DOES exist on a
   given Mac, confirm the probe works and the segment appears.
 - **`curl` is reported ok.** It ships with macOS, so the doctor's `curl` row
@@ -163,46 +135,7 @@ Then the 0.3.5 surfaces, none of which has ever run on a Mac:
 
 ### Windows, Git for Windows bash
 
-**Partly run, 2026-09-21** on Windows 11 Home (26200), Git for Windows bash
-5.3.15, native jq 1.8.2 from WinGet, Claude Code 2.1.278. What follows is
-only what was actually executed on that box; everything not listed here is
-still unrun, and the risk list below it stands unchanged for those.
-
-- **The whole harness.** `run-all.sh`: **241 assertions across eleven suite
-  runs, 0 failures**, both halves of every `x2` suite included. It takes
-  about 25 minutes here, most of it building the PATH mirror.
-  Getting there took three harness fixes of its own, none of them about the
-  scripts under test: the PATH mirror removed a binary by its bare name and
-  so never removed `jq.exe`, `curl.exe`, `flock.exe` or `timeout.exe`; the
-  20-way lock test assumed 20 processes could be launched inside a one
-  second hold, which needs a fork to be about a millisecond; and two
-  exact-string rows set their reset stamps exactly on a display boundary,
-  so the value they asserted was true for one second. Before those fixes
-  this box reported 26 failures, every one of them fiction.
-- **The real `timeout.exe`.** With `C:\Windows\System32` first on PATH,
-  `nut_have_gnu_timeout` rejects cmd's `timeout.exe`, `nut_timeout 15
-  printf hello` returns `hello` immediately rather than after 15s, and
-  `nut_timeout 2 sleep 20` is killed at 3s with rc 143. This was the first
-  of the three risks below and it holds.
-- **The doctor's OS arm, for real.** Not a stub `uname`: it reports
-  `os windows Windows (Git Bash)`, finds `winget` and `npm`, and every
-  dependency row resolves to a real path, including jq under the WinGet
-  package directory.
-- **The usage probe end to end.** `state/account_usage_cache.json` exists and the
-  per-model weekly segment renders with a converted reset date, which is
-  `curl -K <posix path>` surviving MSYS path rewriting and
-  `fromdateiso8601` working in the native jq - two of the 0.3.5 risks
-  below. No `usage_hdr.*` file was left in `state/`.
-- **`cfg_mode` and CRLF**, indirectly: both layouts render and every toggle
-  verb behaves, across 57 assertions in the mode suite. A stray `\r` on
-  that field would have forced detail and failed them.
-
-Still unrun here, and not to be marked off on the strength of the above:
-the package managers for real (`scoop`, `winget`, `choco`, and whether
-winget raises a UAC prompt), PATH visibility after an install, and SIGTERM
-to a native `.exe` with grandchildren.
-
-Three specific risks, each with a reason to doubt it:
+Never run. Three specific risks, each with a reason to doubt it:
 
 - **`timeout.exe`**: `C:\Windows\System32\timeout.exe` is on the Git Bash
   `PATH` and is cmd's "wait N seconds", not coreutils. `nut_have_gnu_timeout`
@@ -244,7 +177,7 @@ The 0.3.5 work adds five more, all of them Windows-specific by nature:
   when the callee is a native `.exe`, and Windows 10 and later ship their
   own `curl.exe`. Confirm the probe still authenticates, and confirm the
   temp file is deleted afterwards whichever curl runs.
-- **`fromdateiso8601` in a native jq.** `account_usage_cache_refresh.sh` converts
+- **`fromdateiso8601` in a native jq.** `usage_cache_refresh.sh` converts
   the endpoint's ISO stamp with it. jq's date builtins lean on the C
   library and are the part of jq most likely to differ on a Windows build.
   A stamp that fails to convert makes the entry drop out silently, which
