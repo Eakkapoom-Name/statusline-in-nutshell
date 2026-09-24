@@ -45,11 +45,14 @@
 # Cache shape:
 #   {"updated_at": <epoch>, "windows_at": <epoch>,
 #    "models":  {"<display_name>": {percent, resets_at}},
-#    "windows": {"five_hour": {used_percentage, resets_at}, "seven_day": {...}}}
+#    "windows": {"five_hour": {used_percentage, resets_at}, "seven_day": {...}},
+#    "windows_absent": ["seven_day"]}
 # where every resets_at is a unix epoch, converted here so the render path
 # never has to parse a timestamp. `windows` uses the payload's own
 # used_percentage key so statusline.sh can feed it through the same helpers
-# as a payload window.
+# as a payload window. `windows_absent` lists the account windows the
+# response positively reported as not existing (see the jq below); it is the
+# only way statusline.sh can learn that a window went away (issue #3).
 #
 # The two stamps are not interchangeable. `updated_at` is the 300s throttle
 # and moves on EVERY attempt, successful or not, so an endpoint that is down
@@ -130,6 +133,19 @@ new=""
           used_percentage: ((.percent | numbers) // 0),
           resets_at: (.resets_at | epoch) }
       | select(.resets_at != null) ] as $acct
+  # A window the account no longer has (issue #3). Only a response that
+  # says so twice counts: the top-level key is present and null, which is
+  # how the endpoint reports every window an account lacks, AND limits[]
+  # holds no entry of that kind, parseable or not. A missing key, a missing
+  # limits array or an entry whose stamp did not convert all say nothing,
+  # so a renamed field or a parse failure can never wipe a live window.
+  | . as $r
+  | [ ["five_hour", "session"], ["seven_day", "weekly_all"]
+      | .[0] as $w | .[1] as $k
+      | select(($lim | length) > 0)
+      | select(($r | has($w)) and $r[$w] == null)
+      | select([$lim[] | select(.kind? == $k)] | length == 0)
+      | $w ] as $absent
   | { updated_at: $now,
       windows_at: $now,
       models: ($scoped
@@ -138,7 +154,8 @@ new=""
       windows: ($acct
                 | map({ (.name): {used_percentage: .used_percentage,
                                   resets_at: .resets_at} })
-                | add // {}) }' 2>/dev/null)
+                | add // {}),
+      windows_absent: $absent }' 2>/dev/null)
 
 # A failed call moves updated_at and nothing else, carrying both `models` and
 # `windows` forward untouched and leaving `windows_at` where it was. Without
@@ -157,10 +174,11 @@ if [ -z "$new" ]; then
     '{updated_at: $now,
       windows_at: ((.windows_at | numbers) // 0),
       models:  ((.models? | objects) // {}),
-      windows: ((.windows? | objects) // {})}' \
+      windows: ((.windows? | objects) // {}),
+      windows_absent: ((.windows_absent? | arrays) // [])}' \
     "$NUT_USAGE_CACHE" 2>/dev/null) \
     || new=""
-  [ -n "$new" ] || new="{\"updated_at\":$now,\"windows_at\":0,\"models\":{},\"windows\":{}}"
+  [ -n "$new" ] || new="{\"updated_at\":$now,\"windows_at\":0,\"models\":{},\"windows\":{},\"windows_absent\":[]}"
 fi
 
 nut_write_json_object "$new" "$NUT_USAGE_CACHE"

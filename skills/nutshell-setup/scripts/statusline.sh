@@ -563,6 +563,8 @@ fmt_tok($ctxtt) as $total_fmt |
 # The endpoint windows carry the same gate for the same reason: they are the
 # numbers of the subscription account, and a metered tab must render none.
 (if ($plan == "none") or ($showrate | not) then {} else $uw end) as $uwg |
+(if ($plan == "none") or ($showrate | not) then []
+ else (($us.windows_absent? | arrays) // []) end) as $uabsent |
 ((($pl.cost.total_cost_usd | numbers) // 0) > 0) as $responded |
 ($cost | tostring) as $costs |
 
@@ -598,15 +600,35 @@ live(clean($uwg["seven_day"])) as $usv |
 # cache and then the endpoint for a window its payload lacks or has expired;
 # an idle one renders whichever of the endpoint and the cache was measured
 # later, falling back likewise.
+#
+# Each cached window carries `at`, when that reading was actually measured:
+# this render for a fresh payload, `windows_at` for the endpoint, carried
+# unchanged otherwise. `measured_at` cannot serve, since every fresh render
+# restamps it even for a window that came from the cache. A window without
+# one (a cache written before 0.3.7) reads as 0, never measured.
+#
+# A window the endpoint reported absent (issue #3), in a probe newer than
+# the cached reading, is gone: neither the cache nor a frozen payload may
+# bring it back, only a fresh payload that carries it again. Nothing else
+# can say a window no longer exists, since an absent window in a payload or
+# an old probe only ever means "no reading".
+def at_of($w): (($c[$w].at? | numbers) // 0);
+def gone($w): ($uabsent | index($w)) != null and $u_wat > at_of($w);
+def src($v; $at): if $v == null then null else {v: $v, at: $at} end;
 def pick($w; $pw; $uv):
-  if $fresh then (live($pw) // live(clean($c[$w])) // $uv)
-  elif $endpoint_fresher then ($uv // live(clean($c[$w])) // live($pw))
-  else (live(clean($c[$w])) // live($pw) // $uv) end;
-pick("five_hour"; $pf; $uf) as $f | pick("seven_day"; $ps; $usv) as $s |
+  src(live(clean($c[$w])); at_of($w)) as $cv |
+  if $fresh then (src(live($pw); $now) // (if gone($w) then null else $cv end)
+                  // src($uv; $u_wat))
+  elif gone($w) then null
+  elif $endpoint_fresher then (src($uv; $u_wat) // $cv // src(live($pw); 0))
+  else ($cv // src(live($pw); 0) // src($uv; $u_wat)) end;
+pick("five_hour"; $pf; $uf) as $fp | pick("seven_day"; $ps; $usv) as $sp |
+$fp.v as $f | $sp.v as $s |
 # Windows seen on this plan: what the cache remembers, if it was recorded
-# under the same plan, plus whatever is live right now.
+# under the same plan and is not gone, plus whatever is live right now.
 (($c.seen | objects) // {}) as $seen |
 (if ($seen.plan // "") == $plan then (($seen.windows | arrays) // []) else [] end
+  | map(select(gone(.) | not))
   + (if $f == null then [] else ["five_hour"] end)
   + (if $s == null then [] else ["seven_day"] end)
   | unique) as $windows |
@@ -631,8 +653,8 @@ def show($w; $v):
   elif ($windows | length) > 0 then false
   elif $responded then false
   else true end;
-( (if $f == null then {} else {five_hour: $f} end)
-  + (if $s == null then {} else {seven_day: $s} end)
+( (if $f == null then {} else {five_hour: ($f + {at: $fp.at})} end)
+  + (if $s == null then {} else {seven_day: ($s + {at: $sp.at})} end)
   + (if $fresh then {measured_at: $now}
      elif $endpoint_used then {measured_at: $u_wat}
      elif ($c.measured_at | type) == "number" then {measured_at: $c.measured_at}

@@ -24,7 +24,7 @@ bash docs/test-harness/run-all.sh /path/to/statusline-in-nutshell
 
 Expect `every suite passed` on the last line, and an exit status of 0.
 Allow about four minutes: two of the suites deliberately wait out the 90
-second cap on `reset-all-time`. 196 assertions as of 2026-09-10.
+second cap on `reset-all-time`. 236 assertions as of 2026-09-25.
 
 Each suite also runs on its own, taking the checkout and a scratch `HOME`:
 
@@ -49,6 +49,7 @@ bash docs/test-harness/t_shim.sh "$PWD/skills/nutshell-setup/scripts/nutshell-li
 | `t_kill.sh` | 6 | A `reset-all-time` killed at its limit must report failure rather than `done`, and must release its lock. The hung auth probe runs through the real `nut_spawn` shape: nohup, disown, no tty |
 | `t_modeassert.sh` | 51 | Both layouts byte for byte, every part toggle in simple, first-install versus upgrade defaults for `mode` and `cost`, a bad or missing key repaired, the `mode` verb including its toggle and its refusal while inactive, the `status` row order, the per-model weekly window (live, expired, absent, and hidden with the session part), and the accent color including the max effort that stays orange under it |
 | `t_rate.sh` | 17 | Which of the three readings of the two account rate windows wins: this session's own payload, the shared rate cache, and the usage endpoint cache. Covers the stale-cache correction with no message sent, `windows_at` versus `updated_at` so a failed probe cannot outrank a live publish, an expired or absent endpoint window, a pre-0.3.6 usage cache, a metered session reading neither shared source, the session part hiding both, and the cache settling to no write after one correction |
+| `t_absent.sh` | 23 | A window the account no longer has (issue #3). The probe, against a stubbed `curl`: `windows_absent` needs both a null top-level key and no `limits[]` entry of that kind, so an unparseable entry, a missing key or a missing `limits` array never marks one, and a failed call carries the verdict forward. The render: an absent window leaves the row, the shared cache and `seen.windows` in a fresh and an idle tab, a frozen payload cannot restore it, the cache settles, a pre-0.3.7 usage cache changes nothing, a reading measured after the probe outranks it, a fresh payload brings it back, and a metered session touches nothing |
 | `t_deps.sh` | 34 | `nutshell-doctor.sh` per OS, with `uname` stubbed so the macOS and Git Bash arms run on Linux, the `optional` tier for `curl`, and `nutshell-install-deps.sh`: plan versus apply, channel and version resolution, both sudo arms, CRLF from a native package manager, a dry run that touches nothing, a failing install, and the usage errors. Nothing here installs anything or reaches the network: every package manager is a stub that records its argv |
 | `t_mode.sh` | n/a | Not assertions. Dumps the simple row in fourteen states with its width in terminal cells, for eyeballing a layout change |
 
