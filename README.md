@@ -82,10 +82,10 @@ Both layouts draw their values in one accent color, orange by default, and
 ## Notice
 
 - macOS runs on its stock tools. The scripts target bash 3.2 and the BSD
-  userland, verified on macOS 26, and nothing has to come from Homebrew: the
-  two tools stock macOS does not ship, `flock` and `timeout`, are carried by
-  the plugin itself as of 0.3.4, so Linux, macOS and Windows all get the same
-  locking and the same hang guard.
+  userland, and nothing has to come from Homebrew: the two tools stock macOS
+  does not ship, `flock` and `timeout`, are carried by the plugin itself as of
+  0.3.4, so Linux, macOS and Windows all get the same locking and the same
+  hang guard. The current release has not been run on real Mac hardware yet.
 - WSL is still under development. Some functions may be incompatible.
 
 ## Requirement
@@ -172,11 +172,11 @@ Anything missing is then installed for you, on Linux, macOS, WSL and Windows
 alike, after one question that names every package, its version and the
 channel it would come from. Nothing is installed before you answer, and
 declining is a complete answer: the install continues and the report says
-which row stays empty. Three things are never installed on your behalf:
-Homebrew, a Node runtime, and `claude` itself, which is Claude Code and can
-only be a `PATH` problem. A fix needing a `sudo` password is handed back to
-you rather than run, since a command asking for a password inside a tool call
-has no terminal to ask on.
+which row stays empty. Four things are never installed on your behalf:
+Homebrew, a Node runtime, `bash`, and `claude` itself, which is Claude Code
+and can only be a `PATH` problem. A fix needing a `sudo` password is handed
+back to you rather than run, since a command asking for a password inside a
+tool call has no terminal to ask on.
 
 Then it runs the same sync script as the `SessionStart` hook, which re-copies
 any file that differs from the bundled one and restores the registration.
@@ -192,8 +192,9 @@ statusline, or `settings.json` is not a JSON object.
 > [!NOTE]
 > The hook already syncs the scripts at every session start, but it never
 > checks or installs dependencies: installing a package is a change to your
-> machine, and a hook that fires at every session start must not make one. Run this when the statusline is missing,
-> or when a line stays empty and you want to know why.
+> machine, and a hook that fires at every session start must not make one.
+> Run this when the statusline is missing, or when a line stays empty and you
+> want to know why.
 
 ### /nutshell:nutshell-mode
 
@@ -275,8 +276,9 @@ always on and the accent color is deliberately not in the table.
 ### /nutshell:nutshell-show
 
 Turns a part back on, which means its line in `detail` (for cost, its
-segment at the end of the session line) and its segment in `simple`. It takes `all`, `session`, `cost` or `workspace`, and with no
-argument at all it turns all three on. It does not take `emoji`, which is
+segment at the end of the session line) and its segment in `simple`. It takes
+`all`, `session`, `cost` or `workspace`, and with no argument at all it turns
+all three on. It does not take `emoji`, which is
 [its own command](#nutshellnutshell-emoji), and it does not take `model`,
 which is always on.
 
@@ -305,11 +307,12 @@ the row is still yours and line 1 keeps rendering.
 
 `session` is the rate-limit line, named for the 5-hour and weekly session
 limits it tracks. `cost` is the current session's spend at the end of that
-line, which stays on its own when the rate windows are hidden. `workspace` is the location line: the current directory with
-your home folder shortened to `~`, the repository parsed from the `origin`
-remote, and the branch read straight from `.git/HEAD`. Each part is
-independent, so a folder outside any repository still shows its path, and if
-none of the three resolve the line is left out rather than printed empty.
+line, which stays on its own when the rate windows are hidden. `workspace` is
+the location line: the current directory with your home folder shortened to
+`~`, the repository parsed from the `origin` remote, and the branch read
+straight from `.git/HEAD`. Each part is independent, so a folder outside any
+repository still shows its path, and if none of the three resolve the line is
+left out rather than printed empty.
 
 Hide the cost:
 
@@ -428,9 +431,10 @@ reinstall does not come back inactive.
 Ask for a purge, or pass `--purge`, to wipe those too: the whole
 `~/.claude/nutshell/` directory goes, including the retired cost files and
 any `ledger_<source>.json` written by another tool, along with the four
-`.bak` files that versions before 0.3.1 left in `~/.claude/`. Only the `statusLine` key is removed from
-`settings.json`; the rest of the file is left alone. The directories are removed
-with `rmdir`, never a recursive delete, so anything unexpected inside survives.
+`.bak` files that versions before 0.3.1 left in `~/.claude/`. Only the
+`statusLine` key is removed from `settings.json`; the rest of the file is left
+alone. The directories are removed with `rmdir`, never a recursive delete, so
+anything unexpected inside survives.
 
 A non-purge uninstall keeps those `.bak` files on purpose: `settings.json.bak`
 may be your only copy of the settings you had before installing. Nothing writes
