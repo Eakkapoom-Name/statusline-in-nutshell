@@ -1,6 +1,6 @@
 {
   "name": "nutshell",
-  "version": "0.3.7",
+  "version": "0.4.0",
   "description": "Toggleable Claude Code statusline: model/context, rate limits, session cost, workspace, emoji labels. Simple one-line or detailed three-line layout. One command per action: /nutshell:nutshell-show, nutshell-hide, nutshell-emoji, nutshell-mode, nutshell-active, nutshell-inactive, nutshell-status, nutshell-setup, nutshell-uninstall.",
   "author": {
     "name": "Eakkapoom-Name"
