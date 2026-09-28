@@ -419,10 +419,11 @@ takes the command with it. Afterwards, remove the `nutshell` plugin from the
 `/plugin` menu: otherwise its `SessionStart` hook reinstalls the scripts at the
 next session.
 
-By default the uninstall keeps `config.json`, the rate-limit cache, the auth
-cache and any cost history an older version left behind. It still removes the three lock files, any loose
-scripts left by a pre-0.3.1 install, and the `disabled` flag in the config it
-keeps, so a later reinstall does not come back inactive.
+By default the uninstall keeps `config.json`, the shared rate-limit cache, the
+account usage cache, the auth cache and any cost history an older version left
+behind. It still removes every lock file, any loose scripts left by a
+pre-0.3.1 install, and the `disabled` flag in the config it keeps, so a later
+reinstall does not come back inactive.
 
 Ask for a purge, or pass `--purge`, to wipe those too: the whole
 `~/.claude/nutshell/` directory goes, including the retired cost files and

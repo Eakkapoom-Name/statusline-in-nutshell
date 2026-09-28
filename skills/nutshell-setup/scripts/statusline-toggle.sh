@@ -436,7 +436,9 @@ cmd_uninstall() {
   # never a glob, and only the ones this plugin is known to have written.
   rm -f "$NUT_CLAUDE_DIR/statusline.sh" \
         "$NUT_CLAUDE_DIR/cost_cache_refresh.sh" \
-        "$NUT_CLAUDE_DIR/.statusline-sync.lock"
+        "$NUT_CLAUDE_DIR/.statusline-sync.lock" \
+        "$NUT_CLAUDE_DIR/.cost_cache.lock" \
+        "$NUT_CLAUDE_DIR/.auth_cache.json.lock"
   if [ "$purge" = true ]; then
     rm -f "$NUT_CONFIG" \
           "$NUT_COST_CACHE" "$NUT_COST_LEDGER" "$NUT_COST_BASELINE" \
@@ -461,7 +463,7 @@ cmd_uninstall() {
   if [ "$purge" = true ]; then
     echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/, and purged config/cost/lock files plus any .bak files left by versions before 0.3.1."
   else
-    echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/. Config, rate cache, auth cache, any cost history an older version left and any .bak files from versions before 0.3.1 were kept."
+    echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/. Config, shared rate-limit cache, account usage cache, auth cache, any cost history an older version left and any .bak files from versions before 0.3.1 were kept."
   fi
   rm -f "$NUT_BIN_DIR/statusline-toggle.sh" "$NUT_CLAUDE_DIR/statusline-toggle.sh"
   # Drop the directories once their contents are gone. rmdir, never `rm -r`:
