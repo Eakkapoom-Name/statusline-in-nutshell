@@ -24,10 +24,11 @@ bash docs/test-harness/run-all.sh /path/to/statusline-in-nutshell
 
 Expect `every suite passed` on the last line, and an exit status of 0.
 Allow about three minutes: the kill and integration suites wait out the
-15 second cap on a hung auth probe, once per PATH each. 272 assertions as of
-2026-09-25: the ccusage cost cases moved to `archived/fragments/` on 2026-09-23,
-four upgrade cases for the renamed caches were added the next day, and the 23
-absent-window cases of 0.3.7 the day after.
+15 second cap on a hung auth probe, once per PATH each. 278 assertions as of
+2026-11-23: the ccusage cost cases moved to `archived/fragments/` on 2026-09-23,
+four upgrade cases for the renamed caches were added the next day, the 23
+absent-window cases of 0.3.7 the day after, and six weekly Fable reset cases
+in the rate suite on 2026-11-23.
 
 Each suite also runs on its own, taking the checkout and a scratch `HOME`:
 
