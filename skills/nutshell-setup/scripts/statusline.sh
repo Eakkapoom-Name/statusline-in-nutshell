@@ -714,12 +714,16 @@ def show($window; $value):
   # windows, and a stale weekly number is worse than no number. Nothing here
   # ever renders a placeholder 0%.
   (if $account_usage_fable_live then (($account_usage_fable.percent | numbers) // 0) else "" end),
-  # The reset stamp comes from the plan weekly window, not from the usage
-  # endpoint: the two describe the same weekly reset but sit minutes apart
-  # (different clocks, different rounding), and one row showing two weekly
-  # resets reads as a bug. The endpoint stamp is the fallback for a session
-  # whose weekly window has already been dropped from the payload.
-  (if $account_usage_fable_live then ((($picked_seven_day.resets_at | numbers) // $account_usage_fable_resets_at)) else "" end),
+  # The reset stamp comes from the usage endpoint cache, the same source as
+  # the percent above, so the row never pairs an endpoint percent with a
+  # payload reset. It is the all-models weekly window from that endpoint,
+  # the same weekly reset Fable shares; the own stamp of the Fable entry is the
+  # fallback when that window is absent or has expired. The payload
+  # rate_limits are never read here, so this stamp can sit minutes apart
+  # from the all-models weekly row when that row shows a payload reading.
+  (if $account_usage_fable_live
+   then ((live(clean($account_usage_windows["seven_day"])) | .resets_at) // $account_usage_fable_resets_at)
+   else "" end),
   $config_mode
 ] | map(tostring) | join($separator)
 '
