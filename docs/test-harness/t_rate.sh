@@ -118,4 +118,52 @@ out=$(run '{"session_id":"s2","version":"2.1.0","model":{"display_name":"Opus 5"
 eq "the endpoint alone renders the weekly window" "$(w7 "$out")" "0"
 eq "the endpoint alone renders the 5h window"     "$(w5 "$out")" "2"
 
+# The weekly Fable row takes its reset from the usage endpoint cache, the
+# same source as its percent: the cache's all-models weekly window, then the
+# Fable entry's own stamp. Never the payload. Three resets a day or more
+# apart, so their minute-granular stamps cannot collide.
+pw=$((now+259200)); cw=$((now+432000)); fw=$((now+518400))
+# usagef <7d window json, or empty for none> <Fable resets_at>
+usagef() {
+  w='"five_hour":{"used_percentage":2,"resets_at":'"$five"'}'
+  [ -n "$1" ] && w="$w,\"seven_day\":$1"
+  printf '{"updated_at":%s,"windows_at":%s,"models":{"Fable":{"percent":61,"resets_at":%s}},"windows":{%s}}\n' \
+    "$now" "$now" "$2" "$w" > "$ST/account_usage_cache.json"
+}
+# payw <total_cost_usd> <7d resets_at>
+payw() {
+  printf '{"session_id":"s1","version":"2.1.0","model":{"display_name":"Opus 5"},"workspace":{"current_dir":"%s"},"cost":{"total_cost_usd":%s},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":%s},"seven_day":{"used_percentage":7,"resets_at":%s}}}' \
+    "$HOME" "$1" "$five" "$2"
+}
+s7() { printf '%s' "$1" | sed -n 's/.*weekly session: [0-9]*% used (\([^)]*\)).*/\1/p' | head -1 | grep . || echo none; }
+sf() { printf '%s' "$1" | sed -n 's/.*weekly fable: [0-9]*% used (\([^)]*\)).*/\1/p' | head -1 | grep . || echo none; }
+pf() { printf '%s' "$1" | sed -n 's/.*weekly fable: \([0-9]*\)% used.*/\1/p' | head -1 | grep . || echo none; }
+# Each reset's rendered stamp, read off the weekly session row of a fresh
+# payload carrying it, so the expected strings use the script's own format.
+stamp() { rate 2 41 $((now-600)) 5.0; rm -f "$ST/account_usage_cache.json"; s7 "$(run "$(payw 9.0 "$1")")"; }
+sp=$(stamp "$pw"); sc=$(stamp "$cw"); sF=$(stamp "$fw")
+[ "$sp" != "$sc" ] && [ "$sc" != "$sF" ] && [ "$sp" != "$sF" ] && ok "the three test resets render distinct stamps" \
+  || bad "distinct stamps" "[$sp] [$sc] [$sF]"
+
+# A fresh payload wins the weekly session row, yet the Fable row keeps the
+# endpoint's weekly reset.
+rate 2 41 $((now-600)) 5.0
+usagef '{"used_percentage":0,"resets_at":'"$cw"'}' "$fw"
+out=$(run "$(payw 9.0 "$pw")")
+eq "the weekly session row shows the payload reset" "$(s7 "$out")" "$sp"
+eq "the Fable row shows the endpoint weekly reset"  "$(sf "$out")" "$sc"
+eq "the Fable percent is the endpoint's, unchanged" "$(pf "$out")" "61"
+
+# No all-models weekly window in the endpoint cache: Fable's own stamp.
+rate 2 41 $((now-600)) 5.0
+usagef '' "$fw"
+out=$(run "$(payw 9.0 "$pw")")
+eq "with no endpoint weekly window the Fable row shows its own reset" "$(sf "$out")" "$sF"
+
+# An expired endpoint weekly window falls back the same way.
+rate 2 41 $((now-600)) 5.0
+usagef '{"used_percentage":0,"resets_at":'"$gone"'}' "$fw"
+out=$(run "$(payw 9.0 "$pw")")
+eq "an expired endpoint weekly window falls back to the Fable reset" "$(sf "$out")" "$sF"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]
