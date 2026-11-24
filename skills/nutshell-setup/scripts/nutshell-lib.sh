@@ -299,10 +299,10 @@ nut_spawn() {
 #
 # Why not use flock where it exists and this only as the fallback: the two
 # mechanisms do not exclude each other. Claude Code's spawned PATH is not
-# always the terminal's (the same difference that hides a user-local
-# ccusage from the refresher), so a background refresher could take the
-# file lock while a terminal's reset-all-time took the kernel lock on the
-# same path, and both would run. One mechanism everywhere is what makes
+# always the terminal's, so flock can be visible to one caller and not
+# another: a refresher spawned by the statusline could take the kernel lock
+# while the same refresher run by hand from a terminal fell back to the
+# file lock on the same path, and both would run. One mechanism everywhere is what makes
 # the guarantee real.
 #
 # What is given up against flock: the kernel releases a flock when the

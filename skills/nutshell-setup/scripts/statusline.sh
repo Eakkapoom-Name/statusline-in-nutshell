@@ -455,7 +455,7 @@ obj($model_catalog_raw)  as $model_catalog  |
 # registers the statusline, statusline-toggle.sh writes the config later),
 # and a first install starts on the one-line layout. A config that exists
 # but carries no mode key was written before 0.3.4, and that is an upgrade:
-# it stays on the four-line layout its owner already had. An unparseable
+# it stays on the detail layout its owner already had. An unparseable
 # config also lands here as empty, which is the same answer a fresh install
 # gets, and no worse than any other fail-open default in this file.
 # The accent color. Anything but the exact word "blue" reads as orange, so
