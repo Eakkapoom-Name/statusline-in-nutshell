@@ -33,6 +33,9 @@ eq "sync keeps a user's own statusline.sh" "$(cat "$C/statusline.sh" 2>/dev/null
 rc=0; toggle off >/dev/null 2>&1 || rc=$?
 eq "off refuses a user's statusline.sh registration" "$rc" 1
 eq "off leaves the user's registration in place" "$(cmd)" "$MINE"
+toggle reset >/dev/null 2>&1
+eq "reset keeps a user's own statusline.sh" "$(cat "$C/statusline.sh" 2>/dev/null)" "$MINE_BODY"
+eq "reset leaves the user's registration in place" "$(cmd)" "$MINE"
 toggle uninstall --yes >/dev/null 2>&1
 eq "uninstall keeps a user's own statusline.sh" "$(cat "$C/statusline.sh" 2>/dev/null)" "$MINE_BODY"
 eq "uninstall keeps a user's statusline.sh registration" "$(cmd)" "$MINE"

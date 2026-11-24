@@ -2,7 +2,7 @@
 # statusline-toggle.sh: the only writer of config.json, and the command
 # behind every nutshell skill. Shows and hides the statusline parts,
 # switches emoji labels, hands the row back to Claude Code and takes it
-# again, and uninstalls.
+# again, puts the default look back, and uninstalls.
 #
 # The statusline (statusline.sh) has four parts, the same four in both
 # layouts. The line numbers below are the
@@ -60,6 +60,7 @@ Usage:
   statusline-toggle.sh emoji [on|off|toggle]    # no arg = toggle; default off
   statusline-toggle.sh mode [simple|detail]     # no arg = toggle; new installs start simple
   statusline-toggle.sh color [orange|blue]      # no arg = toggle; accent color, default orange
+  statusline-toggle.sh reset                    # parts, emoji, mode and color back to a fresh install's
   statusline-toggle.sh status
   statusline-toggle.sh uninstall --yes [--purge] # remove registration + installed scripts
 
@@ -159,8 +160,8 @@ set_key() {
 
 # Part and emoji commands refuse while the statusline is inactive (handed
 # back to Claude Code with `off`), since nothing they change would be
-# visible. `status`, `on`, `off` and `uninstall` still work: none of them
-# changes what a hidden row would render.
+# visible. `status`, `on`, `off`, `reset` and `uninstall` still work: none
+# of them needs the row to be visible.
 require_active() {
   if nut_config_is_disabled; then
     echo "statusline: inactive. Run 'statusline-toggle.sh on' (the nutshell-active skill) first." >&2
@@ -387,6 +388,33 @@ cmd_color() {
   esac
 }
 
+# Put the look back to what a fresh install gets: every key DEFAULT_CONFIG
+# sets except "disabled", taken from DEFAULT_CONFIG itself so the two can
+# never drift. "disabled" is the active/inactive state, not part of the
+# look, so an inactive statusline stays inactive (and settings.json is not
+# touched). Any other key and everything under state/ stay as they are.
+# Not gated by require_active: resetting before taking the row back is a
+# reasonable order, and nothing here needs the row to be visible.
+cmd_reset() {
+  local look
+  if [ -n "${1:-}" ]; then
+    echo "statusline-toggle: 'reset' takes no argument" >&2
+    usage
+    exit 1
+  fi
+  if ! nut_jq_edit "$NUT_CONFIG" --argjson d "$DEFAULT_CONFIG" '. + ($d | del(.disabled))' 2>/dev/null; then
+    echo "statusline-toggle: could not write $NUT_CONFIG, nothing was reset" >&2
+    exit 1
+  fi
+  look=$(printf '%s' "$DEFAULT_CONFIG" | jq -r '
+    def onoff: if . == true then "on" else "off" end;
+    "session \(.session | onoff), cost \(.cost | onoff), workspace \(.workspace | onoff), emoji \(.emoji | onoff), mode \(.mode), color \(.color)"')
+  echo "reset: default look restored ($look)."
+  if nut_config_is_disabled; then
+    echo "statusline: still inactive. Run 'statusline-toggle.sh on' to show it."
+  fi
+}
+
 # Remove the registration and the installed scripts. Config, caches and
 # any cost history an older version left are kept unless --purge is given. ensure_config is skipped for
 # this command: it must not recreate or rewrite the config it may be about
@@ -523,10 +551,11 @@ main() {
     emoji)                  cmd_emoji "${2:-}" ;;
     color)                  cmd_color "${2:-}" ;;
     mode)                   cmd_mode "${2:-}" ;;
+    reset)                  cmd_reset "${2:-}" ;;
     uninstall)              shift; cmd_uninstall "$@" ;;
     "")                     usage; exit 1 ;;
     *)
-      echo "statusline-toggle: unknown part '$cmd' (expected model|session|cost|workspace|all|on|off|emoji|mode|color|status|uninstall)" >&2
+      echo "statusline-toggle: unknown part '$cmd' (expected model|session|cost|workspace|all|on|off|emoji|mode|color|reset|status|uninstall)" >&2
       usage
       exit 1
       ;;

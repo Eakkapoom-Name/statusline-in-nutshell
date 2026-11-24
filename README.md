@@ -79,6 +79,8 @@ Both layouts draw their values in one accent color, orange by default, and
   goes blank.
 - [`/nutshell:nutshell-emoji`](#nutshellnutshell-emoji) switches between text
   labels and icons.
+- [`/nutshell:nutshell-reset`](#nutshellnutshell-reset) puts the parts, emoji,
+  layout and color back to what a new install starts with.
 - [`/nutshell:nutshell-active`](#nutshellnutshell-active) takes it back, with
   your line settings intact.
 - [`/nutshell:nutshell-inactive`](#nutshellnutshell-inactive) hands the row
@@ -367,6 +369,18 @@ Switch back to text labels:
 /nutshell:nutshell-emoji off
 ```
 
+### /nutshell:nutshell-reset
+
+Undoes every show, hide, emoji, mode and color change at once, putting back
+the look a new install starts with: session and workspace shown, cost hidden,
+text labels, the simple layout and the orange accent. Nothing else changes:
+an inactive statusline stays inactive, `settings.json` is not touched, and the
+caches and any cost history stay.
+
+```bash
+/nutshell:nutshell-reset
+```
+
 ### /nutshell:nutshell-active
 
 Takes the row back, with your line settings intact.
@@ -402,8 +416,8 @@ it off, in case Claude Code keeps invoking the old command until the session
 restarts.
 
 While inactive, `show`, `hide`, `emoji`, `mode` and `color` refuse to
-run, since nothing they change would be visible. `status`, `active` and
-`uninstall` still work.
+run, since nothing they change would be visible. `status`, `active`, `reset`
+and `uninstall` still work.
 
 Hand the row back:
 
