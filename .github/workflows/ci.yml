@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test harness (${{ matrix.os }})
+    # Linux only for now. The harness already runs every suite a second time
+    # with flock and timeout hidden from PATH, which is the code path stock
+    # macOS and Git for Windows take, but nothing has run on a real macOS or
+    # Windows runner yet, so those legs wait until they are proven to pass.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # jq is the one hard dependency of the plugin. The runner image ships
+      # it, and this step names a missing jq instead of failing inside a suite.
+      - name: Check dependencies
+        run: jq --version
+
+      # The dependency suite runs the doctor once against the real PATH and
+      # expects every required dependency, claude among them, to be found.
+      # The runner has no Claude Code, so a stub that prints a version
+      # stands in for it. Every other suite stubs claude on its own.
+      - name: Stub the claude binary
+        run: |
+          mkdir -p "$RUNNER_TEMP/stub-bin"
+          printf '#!/usr/bin/env bash\necho "0.0.0 (CI stub)"\n' > "$RUNNER_TEMP/stub-bin/claude"
+          chmod +x "$RUNNER_TEMP/stub-bin/claude"
+          echo "$RUNNER_TEMP/stub-bin" >> "$GITHUB_PATH"
+
+      # Every suite builds its own fake HOME and stubs claude and the package
+      # managers, so nothing needs installing. About three minutes: the kill
+      # and integration suites wait out the 15 second auth probe cap.
+      - name: Run test harness
+        run: bash docs/test-harness/run-all.sh
