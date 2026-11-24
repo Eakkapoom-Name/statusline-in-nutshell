@@ -91,7 +91,18 @@ scopes "" "" ""
 for v in 600k 0.6M 6e5 600,000 600_000 ' 600000 '; do
   eq "env form [$v]" "$(CLAUDE_CODE_AUTO_COMPACT_WINDOW="$v" ctx "$P")" "$SIXH"
 done
-eq "env 600 is tokens, not thousands" "$(CLAUDE_CODE_AUTO_COMPACT_WINDOW=600 ctx "$P")" "$FULL"
+# Below the 100000 minimum, Claude Code raises an env value to it but
+# drops a settings value, so the two sources part ways here.
+MIN='250.0k/100.0k tokens [██████████] 100% used'
+eq "env 600 is tokens raised to the minimum, not 600k" "$(CLAUDE_CODE_AUTO_COMPACT_WINDOW=600 ctx "$P")" "$MIN"
+eq "env 99999 is raised to the minimum" "$(CLAUDE_CODE_AUTO_COMPACT_WINDOW=99999 ctx "$P")" "$MIN"
+eq "env 50k is raised to the minimum"   "$(CLAUDE_CODE_AUTO_COMPACT_WINDOW=50k ctx "$P")" "$MIN"
+eq "env under 1 is unusable"            "$(CLAUDE_CODE_AUTO_COMPACT_WINDOW=0.5 ctx "$P")" "$FULL"
+scopes '{"autoCompactWindow":99999}' "" ""
+eq "a top-level window below 100000 is ignored" "$(ctx "$P")" "$FULL"
+scopes '{"autoCompactWindow":400000}' "" "$(per claude-opus-5-5 99999)"
+eq "a low per-model entry is skipped, not a mask" "$(ctx "$P")" \
+  '250.0k/400.0k tokens [██████░░░░] 63% used'
 
 # The simple layout shows the counts only.
 cfg simple

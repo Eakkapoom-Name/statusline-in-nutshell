@@ -544,18 +544,19 @@ def id_base($id): $id | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
 # the context segment counts against it instead of the full model window:
 # the total becomes min(window, context_window_size), the same cap Claude
 # Code applies, and the percent and the bar are recomputed as
-# total_input_tokens / that limit, capped at 100. "auto", an absent or
-# unusable value, or one below the 100000 minimum is no explicit window,
-# and then both fields pass through untouched.
+# total_input_tokens / that limit, capped at 100. "auto", or an absent or
+# unusable value, is no explicit window, and then both fields pass through
+# untouched. A value below the 100000 minimum is treated as Claude Code
+# treats it: raised to 100000 from the env var, ignored from settings.
 #
 # The resolution follows the Claude Code binary (2.1.331):
 #   1 CLAUDE_CODE_AUTO_COMPACT_WINDOW wins when it parses. Trimmed, then a
 #     k or m suffix (any case) scales a decimal ("600k", "0.6M"); without a
 #     suffix it reads as a JS Number does: exponent form ("6e5"), grouped
 #     thousands ("600,000", "600_000"), else the leading digits of the
-#     string. A bare "600" is 600 tokens, not 600k. Claude Code raises a
-#     value under 100000 to that minimum; here it is no explicit window, so
-#     the row never invents a limit from a typo.
+#     string. A bare "600" is 600 tokens, not 600k. A value from 1 up to
+#     100000 is raised to 100000, the minimum, as Claude Code raises it; a
+#     value under 1 (before rounding) or past 2^53 is unusable.
 #   2 Otherwise the settings scopes fold in order user, project, local. A
 #     scope with a top-level autoCompactWindow sets the default and drops
 #     the per-model entries of the scopes below it; a scope without one
@@ -641,7 +642,9 @@ def acw_env_window($raw):
    end) as $tokens |
   if $tokens == null then null
   else ($tokens | round) as $rounded |
-    if $rounded > 9007199254740991 or $rounded < 100000 then null else $rounded end
+    if $rounded > 9007199254740991 or $rounded < -9007199254740991 or $tokens < 1 then null
+    elif $tokens < 100000 then 100000
+    else $rounded end
   end;
 def acw_setting: if type == "number" and . == floor and . >= 100000 then . else null end;
 # Each split is followed by a fallback: jq splits "" into [], not [""].
