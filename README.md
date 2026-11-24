@@ -1,20 +1,17 @@
 # statusline-in-nutshell
 
-A customized statusline for Claude Code, in place of the default footer, and
-it comes in two layouts so you can pick how much of it you want to look at.
+A customized statusline for Claude Code, in place of the default footer, in
+two layouts.
 
-A new install starts on `simple`, which fits everything worth glancing at
-into a single line from the model you are on and how hard it is thinking, the
-advisor when you have one, how much context is left, how much of each rate
-window you have spent and how long until it resets, and finally the repo and
-branch you are working in.
+A new install starts on `simple`, one line with the model and its effort, the
+advisor when you have one, context used, how much of each rate window you have
+spent and how long until it resets, and the repo and branch.
 
 ```
 Sonnet 5 (high) | adv: Opus 5 | ctx: 412.0k/1.0m | 5h: 42% (2h36m) | 7d: 18% (5d18h) | fable: 61% (5d18h) | statusline-in-nutshell@main
 ```
 
-Turn on emoji labels and the words give way to icons, which buys back a
-little more room on the same line:
+Emoji labels swap the words for icons and buy back a little room:
 
 ```
 💡 Sonnet 5 (high) | 🎓 Opus 5 | ⏳ 412.0k/1.0m | 🕐 42% (2h36m) | 🔄 18% (5d18h) | ⚡ 61% (5d18h) | 🌐 statusline-in-nutshell@main
@@ -27,12 +24,11 @@ nothing to switch off. The current session's cost is off on a new install;
 switch it on and it joins the row after the rate windows, as `cost: 1.24$`
 (or `🪙 1.24$` with icons).
 
-When you would rather see the whole picture, `detail` spreads the same
-information across three lines and adds what simple leaves behind. Line 1
-carries the model, effort level, advisor and context usage, this time with a
+`detail` spreads the same information across three lines and adds what simple
+leaves out. Line 1 carries the model, effort, advisor and context usage with a
 progress bar. Line 2 shows the rate limits with the clock time each window
-resets at, followed by the current session's cost, and line 3 says where you
-are: the directory, the repository and the git branch.
+resets at, then the session cost. Line 3 shows the directory, the repository
+and the git branch.
 
 ```
 model: Sonnet 5 (high) | advisor: Opus 5 | context: 412.0k/1.0m tokens [████░░░░░░] 41% used
@@ -120,13 +116,11 @@ which one is missing.
   is the only outbound network call anything here makes, and a metered
   session never makes it.
 
-`flock` and `timeout` were listed here through 0.3.3 and you no longer need
-either. The plugin serialises its own background refreshes with a lock file
-it manages itself, and cuts a hung probe short with its own watcher. Where
-GNU `timeout` happens to be installed it is still used, since it needs no
-extra processes, and it is recognised by asking it for its version rather
-than by its name alone: the bash that Git for Windows ships carries Windows'
-own unrelated `timeout.exe` on its `PATH`.
+`flock` and `timeout`, listed here through 0.3.3, are no longer needed (see
+[Notice](#notice)). Where GNU `timeout` is installed it is still used, since it
+needs no extra processes. It is recognised by its version output rather than
+its name, because the bash in Git for Windows carries Windows' own unrelated
+`timeout.exe` on its `PATH`.
 
 ## Install
 
@@ -147,8 +141,7 @@ Then install the plugin:
 ```
 
 Restart your session. The hook copies the scripts into `~/.claude/nutshell/bin/`
-and registers the statusline for you. There is nothing else to do; the status
-line simply appears.
+and registers the statusline, so it simply appears.
 
 Confirm it with:
 
@@ -156,9 +149,8 @@ Confirm it with:
 /nutshell:nutshell-status
 ```
 
-You should see the statusline reported as active, the mode as `simple` on a
-fresh install, model, session and workspace on, and cost off, which is where
-a new install leaves it until you ask for it.
+A fresh install reports the statusline active, the mode `simple`, model,
+session and workspace on, and cost off.
 
 ## Usage
 
@@ -176,11 +168,10 @@ The dependency check is a read-only report: what the plugin needs, what your
 machine has, and the exact command that closes each gap on your OS. It needs
 no `jq` itself, so it works on the machine it is diagnosing.
 
-Anything missing is then installed for you, on Linux, macOS, WSL and Windows
-alike, after one question that names every package, its version and the
-channel it would come from. Nothing is installed before you answer, and
-declining is a complete answer: the install continues and the report says
-which row stays empty. Four things are never installed on your behalf:
+Anything missing is then installed for you, on Linux, macOS, WSL and Windows,
+after one question naming every package, its version and its channel. Nothing
+is installed before you answer. If you decline, the install continues and the
+report says which row stays empty. Four things are never installed for you:
 Homebrew, a Node runtime, `bash`, and `claude` itself, which is Claude Code
 and can only be a `PATH` problem. A fix needing a `sudo` password is handed
 back to you rather than run, since a command asking for a password inside a
@@ -278,7 +269,7 @@ Pick one:
 
 Prints where everything stands: whether the statusline is active, which
 layout it is on, and the state of session, cost, workspace and emoji. Model is
-always on and the accent color is deliberately not in the table.
+always on.
 
 ```bash
 /nutshell:nutshell-status
@@ -439,9 +430,8 @@ Removes the statusline and the installed scripts. It confirms first. See
 
 ## Uninstall
 
-Run [`/nutshell:nutshell-uninstall`](#nutshellnutshell-uninstall). It confirms
-first, then cleans up. Do this before removing the plugin, since removing it
-takes the command with it. Afterwards, remove the `nutshell` plugin from the
+Run [`/nutshell:nutshell-uninstall`](#nutshellnutshell-uninstall) before
+removing the plugin, since removing it takes the command with it. Afterwards, remove the `nutshell` plugin from the
 `/plugin` menu: otherwise its `SessionStart` hook reinstalls the scripts at the
 next session.
 
@@ -460,9 +450,8 @@ alone. If that key registers a different statusline, not nutshell's, it stays
 too, and the uninstall says so. The directories are removed with `rmdir`,
 never a recursive delete, so anything unexpected inside survives.
 
-If you would rather not go through the skill, this is the rough equivalent of a
-purge. Remove the plugin from `/plugin` afterwards, or the hook puts everything
-back at the next session start.
+Without the skill, this is the rough equivalent of a purge (then remove the
+plugin from `/plugin` as above):
 
 ```bash
 rm -r ~/.claude/nutshell
