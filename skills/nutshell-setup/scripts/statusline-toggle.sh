@@ -398,6 +398,12 @@ cmd_uninstall() {
     case "$a" in
       --yes) yes=true ;;
       --purge) purge=true ;;
+      # Refused, not ignored: a mistyped --purge would otherwise run a plain
+      # uninstall and report success for something that was not asked.
+      *)
+        echo "statusline-toggle: 'uninstall' does not take '$a' (expected --yes and optionally --purge)" >&2
+        exit 1
+        ;;
     esac
   done
   if [ "$yes" != true ]; then

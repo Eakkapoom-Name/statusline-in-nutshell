@@ -163,4 +163,15 @@ toggle uninstall --yes >/dev/null 2>&1
 [ -f "$C/nutshell/state/auth_cache.json.888" ] && ok "a plain uninstall leaves state/ alone" \
   || bad "b4-plain" "state/ swept without --purge"
 
+# --- nit: unknown uninstall flags are refused --------------------------------
+
+fresh n5-typo; printf '{}\n' > "$C/settings.json"; sync_
+rc=0; out=$(toggle uninstall --yes --prge 2>"$HOME/err") || rc=$?
+eq "uninstall with an unknown flag exits 1" "$rc" 1
+grep -q "does not take '--prge'" "$HOME/err" && ok "the refusal names the unknown flag" \
+  || bad "n5-typo" "stderr: $(cat "$HOME/err")"
+eq "an unknown flag leaves the registration" "$(cmd)" "$NEW"
+[ -x "$BIN/statusline.sh" ] && [ -x "$BIN/statusline-toggle.sh" ] && ok "an unknown flag removes nothing" \
+  || bad "n5-typo" "files removed"
+
 printf '%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]
