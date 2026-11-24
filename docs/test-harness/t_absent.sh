@@ -75,6 +75,25 @@ PATH="$STUB:$PATH" bash "$BIN/account_usage_cache_refresh.sh" 2.1.0
 eq "probe: a failed call keeps the absence" "$(absent)" '["seven_day"]'
 eq "probe: and keeps its windows_at" "$(jq -r .windows_at "$ST/account_usage_cache.json")" "$wat"
 
+# The reset stamp conversion. 1795964400 is 2026-11-29T15:00:00Z. A
+# non-zero fraction rounds up to the next whole second, in either offset
+# form; a whole-second stamp and an all-zero fraction stay as they are; any
+# other offset is dropped rather than guessed at.
+# stamp5 <iso>: the five_hour resets_at the probe stores for that stamp.
+stamp5() {
+  printf '{"five_hour":{},"seven_day":{},"limits":[{"kind":"session","percent":19,"resets_at":"%s"}]}' "$1" > "$STUB_BODY"
+  probe; jq -r '.windows.five_hour.resets_at // "none"' "$ST/account_usage_cache.json"
+}
+eq "probe: a fractional +00:00 stamp rounds up"      "$(stamp5 2026-11-29T14:59:59.8+00:00)"       "1795964400"
+eq "probe: a fractional Z stamp rounds up"           "$(stamp5 2026-11-29T14:59:59.123456Z)"       "1795964400"
+eq "probe: a whole-second +00:00 stamp is unchanged" "$(stamp5 2026-11-29T15:00:00+00:00)"         "1795964400"
+eq "probe: a whole-second Z stamp is unchanged"      "$(stamp5 2026-11-29T15:00:00Z)"              "1795964400"
+eq "probe: an all-zero fraction is unchanged"        "$(stamp5 2026-11-29T15:00:00.000000+00:00)"  "1795964400"
+eq "probe: another offset is dropped"                "$(stamp5 2026-11-29T15:00:00.5+05:00)"       "none"
+printf '{"five_hour":{},"seven_day":{},"limits":[{"kind":"weekly_scoped","percent":3,"scope":{"model":{"display_name":"Fable"}},"resets_at":"2026-11-29T14:59:59.954+00:00"}]}' > "$STUB_BODY"
+probe
+eq "probe: a per-model stamp rounds up the same way" "$(jq -r .models.Fable.resets_at "$ST/account_usage_cache.json")" "1795964400"
+
 # ---------------------------------------------------------------------------
 # The render.
 printf '{"sessions":{"s1":{"subscription_type":"team","updated_at":%s}}}\n' "$now" > "$ST/auth_cache.json"

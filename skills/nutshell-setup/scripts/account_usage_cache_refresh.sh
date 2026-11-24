@@ -115,14 +115,20 @@ rm -f "$hdr" 2>/dev/null
 
 # Keep only the per-model weekly windows, and only those whose reset stamp
 # converts cleanly. jq's fromdateiso8601 takes "...Z" and nothing else, so
-# the fractional seconds are dropped and a "+00:00" offset is rewritten;
-# anything carrying a different offset is skipped rather than guessed at.
+# a "+00:00" offset is rewritten to "Z" and the fractional seconds are cut
+# off before the parse; anything carrying a different offset is skipped
+# rather than guessed at. A non-zero fraction then rounds UP to the next
+# whole second: the endpoint stamps a reset just before the boundary it
+# means ("21:59:59.8" for 22:00), and truncating it rendered every reset a
+# minute early. A whole-second stamp, or an all-zero fraction, is unchanged.
 new=""
 [ -n "$body" ] && new=$(printf '%s' "$body" | jq -c --argjson now "$now" '
   def epoch: (strings // "")
-             | sub("\\.[0-9]+"; "")
              | sub("\\+00:00$"; "Z")
-             | (try fromdateiso8601 catch null);
+             | test("\\.[0-9]*[1-9][0-9]*Z$") as $fraction
+             | sub("\\.[0-9]+"; "")
+             | (try fromdateiso8601 catch null)
+             | if . != null and $fraction then . + 1 else . end;
   select(type == "object") | select(has("error") | not)
   | ((.limits? | arrays) // []) as $lim
   | [ $lim[]

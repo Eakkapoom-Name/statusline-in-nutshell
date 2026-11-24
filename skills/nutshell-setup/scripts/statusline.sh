@@ -863,8 +863,8 @@ def show($window; $value):
   # shared cache or endpoint). Fable shares that weekly reset, and taking it
   # from the same pick keeps the two rows from drifting apart. They used to:
   # the endpoint sends ISO stamps with fractional seconds, which the refresh
-  # script truncates, so a reset at 22:00:00 could arrive as 21:59:59 and
-  # render a minute before the whole-second payload stamp. Only when no live
+  # script used to truncate, so a reset at 22:00:00 arrived as 21:59:59 and
+  # rendered a minute before the whole-second payload stamp. Only when no live
   # seven_day reading was picked does the own stamp of the Fable entry serve.
   (if $account_usage_fable_live
    then ($picked_seven_day.resets_at // $account_usage_fable_resets_at)
