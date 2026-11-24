@@ -75,7 +75,9 @@ After the script ran, on a yes:
   its own line, last.
 - No `uninstalled:` line at all: "The uninstall did not complete. Check that
   `~/.claude/nutshell/` and `~/.claude/settings.json` are writable, then
-  retry." Add any stderr line in a code block.
+  retry." Add any stderr line in a code block. When stderr says `Nothing was
+  uninstalled`, the scripts and the registration are both still in place, so
+  the statusline keeps working until the retry.
 - stderr says `'uninstall' removes the statusline registration`: "The
   confirmation flag was missing, so nothing was removed. This is a bug in
   the skill, not your input."

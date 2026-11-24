@@ -103,4 +103,36 @@ case "$out" in
   *) bad "b2-ours" "output: $out" ;;
 esac
 
+# --- bug 3: a failed unregister stops before deleting anything ---------------
+
+fresh b3-garbage; printf '{}\n' > "$C/settings.json"; sync_
+GARBAGE='{"statusLine":{"type":"command","command":"bash ~/.claude/nutshell/bin/statusline.sh"} oops'
+printf '%s\n' "$GARBAGE" > "$C/settings.json"
+rc=0; out=$(toggle uninstall --yes 2>"$HOME/err") || rc=$?
+eq "uninstall on an unparseable settings.json exits 1" "$rc" 1
+case "$out" in uninstalled:*) bad "b3-garbage" "claimed success: $out" ;; *) ok "uninstall on an unparseable settings.json claims no success" ;; esac
+grep -q "$C/settings.json" "$HOME/err" && grep -q 'Nothing was uninstalled' "$HOME/err" \
+  && ok "the failure names settings.json" || bad "b3-garbage" "stderr: $(cat "$HOME/err")"
+[ -x "$BIN/statusline.sh" ] && [ -x "$BIN/statusline-toggle.sh" ] && [ -f "$BIN/nutshell-lib.sh" ] \
+  && ok "the scripts stay when the registration could not be removed" \
+  || bad "b3-garbage" "bin/ holds: $(ls "$BIN" 2>/dev/null | tr '\n' ' ')"
+eq "settings.json is left as it was" "$(cat "$C/settings.json")" "$GARBAGE"
+
+# An unwritable ~/.claude: the temp file for the rewrite cannot be created.
+# Skipped where the permission bits do not bind (root, Windows ACLs).
+fresh b3-readonly; printf '{}\n' > "$C/settings.json"; sync_
+chmod 555 "$C"
+if ( : > "$C/.probe" ) 2>/dev/null; then
+  rm -f "$C/.probe"; chmod 755 "$C"; ok "unwritable settings case skipped: permissions do not bind here"
+else
+  rc=0; out=$(toggle uninstall --yes 2>"$HOME/err") || rc=$?
+  chmod 755 "$C"
+  eq "uninstall with settings.json unwritable exits 1" "$rc" 1
+  grep -q 'could not write' "$HOME/err" && ok "the failure says settings.json could not be written" \
+    || bad "b3-readonly" "stderr: $(cat "$HOME/err")"
+  eq "the registration is still ours" "$(cmd)" "$NEW"
+  [ -x "$BIN/statusline.sh" ] && ok "the scripts stay when settings.json is unwritable" \
+    || bad "b3-readonly" "bin/statusline.sh deleted"
+fi
+
 printf '%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]

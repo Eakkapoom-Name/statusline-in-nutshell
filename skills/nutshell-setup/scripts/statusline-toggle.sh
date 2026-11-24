@@ -392,7 +392,7 @@ cmd_color() {
 # this command: it must not recreate or rewrite the config it may be about
 # to remove, and the warn path must leave every file untouched.
 cmd_uninstall() {
-  local yes=false purge=false a f
+  local yes=false purge=false rc a f
   local removed="removed the statusline registration and the scripts under ~/.claude/nutshell/bin/"
   for a in "$@"; do
     case "$a" in
@@ -411,8 +411,22 @@ cmd_uninstall() {
   # Someone else's registration stays, exactly as `off` refuses to delete
   # it: the user switched to another statusline, or had one before
   # installing this plugin. The scripts still go; the line says what stayed.
+  # A registration that could not be removed stops everything here, before
+  # a single file goes: deleting the scripts anyway would leave settings.json
+  # pointing at a statusline.sh that no longer exists, with Claude Code's own
+  # footer still suppressed, under a message that claimed success.
   if nut_statusline_is_ours; then
-    nut_settings_unregister || true
+    rc=0
+    nut_settings_unregister || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      if [ "$rc" -eq 1 ]; then
+        echo "statusline-toggle: $NUT_SETTINGS is not valid JSON, so the statusLine registration could not be removed." >&2
+      else
+        echo "statusline-toggle: could not write $NUT_SETTINGS, so the statusLine registration could not be removed." >&2
+      fi
+      echo "Nothing was uninstalled; fix settings.json and retry." >&2
+      exit 1
+    fi
   else
     removed="removed the scripts under ~/.claude/nutshell/bin/ and left settings.json's statusLine alone (it registers a different statusline, not nutshell's)"
   fi
