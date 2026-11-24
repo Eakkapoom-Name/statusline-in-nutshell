@@ -135,4 +135,32 @@ else
     || bad "b3-readonly" "bin/statusline.sh deleted"
 fi
 
+# --- bug 4: purge sweeps the write temps nutshell left ----------------------
+
+fresh b4-temps; printf '{}\n' > "$C/settings.json"; sync_
+ST="$C/nutshell/state"
+printf '{}\n' > "$ST/auth_cache.json"
+printf '{}\n' > "$ST/auth_cache.json.12345"
+printf '{}\n' > "$ST/shared_rate_limit_cache.json.Ab3dE9"
+printf '{}\n' > "$C/nutshell/config.json.4242"
+toggle uninstall --yes --purge >/dev/null 2>&1
+[ ! -e "$C/nutshell" ] && ok "purge with write temps present leaves no nutshell/ directory" \
+  || bad "b4-temps" "left: $(find "$C/nutshell" | tr '\n' ' ')"
+
+# Something nutshell never writes still survives the purge.
+fresh b4-user-file; printf '{}\n' > "$C/settings.json"; sync_
+printf 'mine\n' > "$C/nutshell/notes.txt"
+printf '{}\n' > "$C/nutshell/state/auth_cache.json.777"
+toggle uninstall --yes --purge >/dev/null 2>&1
+[ -f "$C/nutshell/notes.txt" ] && [ ! -e "$C/nutshell/state" ] \
+  && ok "purge sweeps the temps but keeps a file nutshell never wrote" \
+  || bad "b4-user-file" "left: $(find "$C/nutshell" 2>/dev/null | tr '\n' ' ')"
+
+# A plain uninstall keeps state/, temps and all.
+fresh b4-plain; printf '{}\n' > "$C/settings.json"; sync_
+printf '{}\n' > "$C/nutshell/state/auth_cache.json.888"
+toggle uninstall --yes >/dev/null 2>&1
+[ -f "$C/nutshell/state/auth_cache.json.888" ] && ok "a plain uninstall leaves state/ alone" \
+  || bad "b4-plain" "state/ swept without --purge"
+
 printf '%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]

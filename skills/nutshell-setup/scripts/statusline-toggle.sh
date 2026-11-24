@@ -467,6 +467,13 @@ cmd_uninstall() {
     # the source names are not ours to know; with no match the literal pattern reaches rm -f, which
     # ignores a path that does not exist.
     rm -f "$NUT_EXTRA_LEDGER_PREFIX"*.json
+    # Write temporaries a killed writer left behind: "<cache>.json.<pid>"
+    # (and the older mktemp "<cache>.json.XXXXXX") in state/, and the same
+    # beside config.json. The names nut_sweep_write_temps sweeps, but with
+    # no age filter: the scripts that write them are gone. Without this the
+    # rmdir below keeps state/ and nutshell/ for files nutshell wrote itself.
+    find "$NUT_STATE_DIR" -maxdepth 1 -type f -name '*.json.*' -delete 2>/dev/null || true
+    find "$NUT_DIR" -maxdepth 1 -type f -name 'config.json.*' -delete 2>/dev/null || true
   fi
   if [ "$purge" = true ]; then
     echo "uninstalled: $removed, and purged config/cost/lock files."
