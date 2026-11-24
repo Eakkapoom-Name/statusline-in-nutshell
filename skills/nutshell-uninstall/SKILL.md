@@ -67,7 +67,9 @@ Before the script runs:
 
 After the script ran, on a yes:
 
-- stdout starts `uninstalled:` (either variant): that line in a code block,
+- stdout starts `uninstalled:` (any variant, including the one that says it
+  left settings.json's statusLine alone because it registers a different
+  statusline): that line in a code block,
   then "Remove the `nutshell` plugin from `/plugin` as well, or the
   `SessionStart` hook reinstalls the scripts next session." Then "Done." on
   its own line, last.

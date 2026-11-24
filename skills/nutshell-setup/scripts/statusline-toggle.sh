@@ -393,6 +393,7 @@ cmd_color() {
 # to remove, and the warn path must leave every file untouched.
 cmd_uninstall() {
   local yes=false purge=false old_script_ours=false a f
+  local removed="removed the statusline registration and the scripts under ~/.claude/nutshell/bin/"
   for a in "$@"; do
     case "$a" in
       --yes) yes=true ;;
@@ -410,7 +411,14 @@ cmd_uninstall() {
   # Asked before anything is deleted: the old toggle and config this checks
   # for are removed further down.
   nut_legacy_script_is_ours && old_script_ours=true
-  nut_settings_unregister || true
+  # Someone else's registration stays, exactly as `off` refuses to delete
+  # it: the user switched to another statusline, or had one before
+  # installing this plugin. The scripts still go; the line says what stayed.
+  if nut_statusline_is_ours; then
+    nut_settings_unregister || true
+  else
+    removed="removed the scripts under ~/.claude/nutshell/bin/ and left settings.json's statusLine alone (it registers a different statusline, not nutshell's)"
+  fi
   # Clear "disabled" before leaving. A non-purge uninstall keeps the config,
   # and a config that still says disabled would make a later reinstall skip
   # registration entirely: the plugin would look installed and do nothing,
@@ -466,9 +474,9 @@ cmd_uninstall() {
     rm -f "$NUT_OLD_EXTRA_LEDGER_PREFIX"*.json
   fi
   if [ "$purge" = true ]; then
-    echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/, and purged config/cost/lock files plus any .bak files left by versions before 0.3.1."
+    echo "uninstalled: $removed, and purged config/cost/lock files plus any .bak files left by versions before 0.3.1."
   else
-    echo "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/. Config, shared rate-limit cache, account usage cache, auth cache, any cost history an older version left and any .bak files from versions before 0.3.1 were kept."
+    echo "uninstalled: $removed. Config, shared rate-limit cache, account usage cache, auth cache, any cost history an older version left and any .bak files from versions before 0.3.1 were kept."
   fi
   rm -f "$NUT_BIN_DIR/statusline-toggle.sh" "$NUT_CLAUDE_DIR/statusline-toggle.sh"
   # Drop the directories once their contents are gone. rmdir, never `rm -r`:

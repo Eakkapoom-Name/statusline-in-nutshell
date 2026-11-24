@@ -439,7 +439,8 @@ Ask for a purge, or pass `--purge`, to wipe those too: the whole
 any `ledger_<source>.json` written by another tool, along with the four
 `.bak` files that versions before 0.3.1 left in `~/.claude/`. Only the
 `statusLine` key is removed from `settings.json`; the rest of the file is left
-alone. The directories are removed with `rmdir`, never a recursive delete, so
+alone. If that key registers a different statusline, not nutshell's, it stays
+too, and the uninstall says so. The directories are removed with `rmdir`, never a recursive delete, so
 anything unexpected inside survives.
 
 A non-purge uninstall keeps those `.bak` files on purpose: `settings.json.bak`

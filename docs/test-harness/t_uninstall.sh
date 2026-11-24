@@ -71,4 +71,43 @@ toggle uninstall --yes >/dev/null 2>&1
 [ ! -e "$C/statusline.sh" ] && ok "uninstall deletes a pre-0.3.1 statusline.sh" \
   || bad "b1-legacy-uninstall" "statusline.sh survived"
 
+# --- bug 2: uninstall leaves a foreign registration alone -------------------
+
+FOREIGN='bash ~/.claude/my-own-line.sh'
+fresh b2-foreign; printf '{}\n' > "$C/settings.json"; sync_
+jq --arg c "$FOREIGN" '.statusLine={"type":"command","command":$c}' "$C/settings.json" > "$C/s" && mv "$C/s" "$C/settings.json"
+out=$(toggle uninstall --yes 2>/dev/null); rc=$?
+eq "uninstall keeps a foreign statusLine" "$(cmd)" "$FOREIGN"
+eq "uninstall with a foreign statusLine still succeeds" "$rc" 0
+case "$out" in
+  "uninstalled: removed the scripts under ~/.claude/nutshell/bin/ and left settings.json's statusLine alone"*)
+    ok "uninstall says it left the foreign statusLine alone" ;;
+  *) bad "b2-foreign" "output: $out" ;;
+esac
+[ ! -e "$BIN/statusline.sh" ] && ok "uninstall with a foreign statusLine still removes the scripts" \
+  || bad "b2-foreign" "bin/statusline.sh survived"
+
+fresh b2-foreign-purge; printf '{}\n' > "$C/settings.json"; sync_
+jq --arg c "$FOREIGN" '.statusLine={"type":"command","command":$c}' "$C/settings.json" > "$C/s" && mv "$C/s" "$C/settings.json"
+toggle uninstall --yes --purge >/dev/null 2>&1
+eq "uninstall --purge keeps a foreign statusLine" "$(cmd)" "$FOREIGN"
+[ ! -d "$C/nutshell" ] && ok "uninstall --purge with a foreign statusLine removes nutshell/" \
+  || bad "b2-foreign-purge" "left: $(find "$C/nutshell" | tr '\n' ' ')"
+
+# A user's own ~/.claude/statusline.sh registration is foreign too.
+fresh b2-mine; user_script; register_mine; sync_
+toggle uninstall --yes >/dev/null 2>&1
+eq "uninstall keeps a user's statusline.sh registration" "$(cmd)" "$MINE"
+
+# Ours is still removed, and unrelated keys survive.
+fresh b2-ours; printf '{"model":"opus","env":{"A":"1"}}\n' > "$C/settings.json"; sync_
+out=$(toggle uninstall --yes 2>/dev/null)
+eq "uninstall removes nutshell's own statusLine" "$(cmd)" none
+eq "uninstall keeps unrelated settings" "$(jq -c '{model,env}' "$C/settings.json")" '{"model":"opus","env":{"A":"1"}}'
+case "$out" in
+  "uninstalled: removed the statusline registration and the scripts under ~/.claude/nutshell/bin/. "*)
+    ok "uninstall of nutshell's own registration reports it removed" ;;
+  *) bad "b2-ours" "output: $out" ;;
+esac
+
 printf '%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]
