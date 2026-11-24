@@ -171,12 +171,13 @@ in `~/.claude/settings.json` (`"refreshInterval": 5` on Windows, where a
 render costs ~150ms of process creation against ~1ms elsewhere). It skips the registration when
 `config.json` says `"disabled": true` (the user made the statusline
 inactive on purpose), when `settings.json` registers a statusline that
-is not ours, or when `settings.json` cannot be parsed or repaired. It
-never touches `config.json` or anything under `state/`, and never writes a
-`.bak`: the settings repair writes only when every key survives it.
-Outside `~/.claude/nutshell/` it creates, edits or deletes nothing but its
-own `statusLine` key and the settings repair just described, so a file such
-as a hand-written `~/.claude/statusline.sh` is never touched.
+is not ours, or when `settings.json` is not a plain JSON object (comments,
+a trailing comma, a BOM, or valid JSON such as `[1,2]`), which it leaves
+byte for byte as it is. It never touches `config.json` or anything under
+`state/`, and never writes a `.bak`. Outside `~/.claude/nutshell/` it
+creates, edits or deletes nothing but its own `statusLine` key, and only in
+a `settings.json` that already parses as a JSON object, so a file such as a
+hand-written `~/.claude/statusline.sh` is never touched.
 
 ### 4. Check the result yourself, since the script reports nothing
 
@@ -186,9 +187,10 @@ as a hand-written `~/.claude/statusline.sh` is never touched.
   exceptions to report rather than fix: `config.json` has
   `"disabled": true` (leave it; the nutshell-active skill is the way
   back), the command points at a different script (someone else's status
-  line; do not replace it), or `settings.json` is not a JSON object
-  (the script repairs a BOM, comments, a trailing comma or a non-object
-      by itself, and leaves anything else alone until it is valid again).
+  line; do not replace it), or `settings.json` is not a plain JSON object
+  (`jq -e 'type == "object"' ~/.claude/settings.json` fails, or
+  `head -c 3 ~/.claude/settings.json | od -An -tx1` prints `ef bb bf`, a
+  BOM). The script never repairs it: the user fixes it.
 
 ## How to answer
 
@@ -235,12 +237,11 @@ Per outcome:
   statusline: "The scripts are up to date. `settings.json` registers another
   statusline, so it was left alone. Run `/nutshell:nutshell-active --force`
   to replace it." Never force it yourself.
-- Registration skipped because `settings.json` could not be parsed or
-  repaired: "The scripts are up to date. `~/.claude/settings.json` could not
-  be parsed or repaired, so it was left untouched. Fix the file, then run
-  this again." The silent repair covers a BOM, `//` and `/* */` comments, a
-  trailing comma, and a file that is valid JSON but not an object; anything
-  else needs the user.
+- Registration skipped because `settings.json` is not a plain JSON object:
+  "The scripts are up to date. `~/.claude/settings.json` has comments, a
+  trailing comma, a BOM or other content that is not a plain JSON object, so
+  nutshell left it alone. Fix it, then run `/nutshell:nutshell-active`."
+  Never edit the file yourself.
 - The doctor itself cannot run (missing, or non-zero with no records): say
   which path you tried, then run the sync anyway and report its result. The
   doctor is a report, not a gate: only a missing `jq` or `bash` stops the

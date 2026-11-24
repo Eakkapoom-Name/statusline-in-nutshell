@@ -73,6 +73,13 @@ After the script ran, on a yes:
   then "Remove the `nutshell` plugin from `/plugin` as well, or the
   `SessionStart` hook reinstalls the scripts next session." Then "Done." on
   its own line, last.
+- stderr says `so nutshell left it alone`: `settings.json` is not a plain
+  JSON object, so the registration could not be read or removed and nothing
+  was uninstalled. Say "`~/.claude/settings.json` has comments, a trailing
+  comma, a BOM or other content that is not a plain JSON object, so nutshell
+  left it alone and uninstalled nothing. Fix it, then run
+  `/nutshell:nutshell-uninstall` again." Stop, and never edit the file
+  yourself.
 - No `uninstalled:` line at all: "The uninstall did not complete. Check that
   `~/.claude/nutshell/` and `~/.claude/settings.json` are writable, then
   retry." Add any stderr line in a code block. When stderr says `Nothing was

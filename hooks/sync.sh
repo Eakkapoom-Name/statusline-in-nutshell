@@ -2,10 +2,9 @@
 # hooks/sync.sh: SessionStart hook. Installs or refreshes the scripts under
 # ~/.claude/nutshell/bin/ and registers the statusLine command in
 # settings.json. Outside ~/.claude/nutshell/ it writes nothing but that one
-# key, and only while the key is absent or already ours. The one exception
-# is the settings repair below (nut_settings_recover), which rewrites a
-# settings.json that does not parse as an object, keeping every key. The nutshell-setup skill runs this
-# same script as the mid-session repair.
+# key, and only while the key is absent or already ours and the file already
+# parses as a JSON object. The nutshell-setup skill runs this same script as
+# the mid-session repair.
 #
 # Never touches user data: config.json and everything under state/, except
 # for renaming the two caches that took new names after 0.3.6. Always
@@ -70,12 +69,12 @@ fi
 command -v jq >/dev/null 2>&1 || exit 0
 nut_config_is_disabled && exit 0
 
-# A settings.json that is not a JSON object gets one silent repair attempt
-# (BOM, comments, trailing comma, or a non-object replaced by {}), which
-# writes only when every key survives. Anything else is left exactly as the
-# user left it, and registration is retried at the next session start.
+# A settings.json that is not a JSON object (comments, a trailing comma, a
+# BOM, or valid JSON such as [1,2]) is the user's to fix: it is left byte for
+# byte as it is, nothing is said here, and registration is retried at the
+# next session start. The toggle commands are where the refusal is reported.
 if [ -f "$NUT_SETTINGS" ]; then
-  nut_settings_is_object || nut_settings_recover || exit 0
+  nut_settings_is_object || exit 0
 else
   echo '{}' > "$NUT_SETTINGS" 2>/dev/null
 fi

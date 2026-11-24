@@ -496,90 +496,18 @@ nut_statusline_is_ours() {
 # (missing, corrupt, valid JSON that is not an object such as `[1,2]`)
 # must be left exactly as the user left it: every edit below would fail on
 # it anyway, and rewriting it would destroy settings this plugin does not
-# own and never backs up.
+# own and never backs up. A leading UTF-8 BOM counts as not an object even
+# though jq reads past it: the jq edit would write the file back without it.
 nut_settings_is_object() {
+  [ "$(head -c 3 "$NUT_SETTINGS" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "efbbbf" ] && return 1
   jq -e 'type == "object"' "$NUT_SETTINGS" >/dev/null 2>&1
 }
 
-# Add our statusLine key to settings.json, creating the file when absent.
-# Returns 0 when written, 1 when the file exists but is not a JSON object
-# (left untouched), 2 when the write itself failed.
-# Strip the three things that make a hand-edited settings.json unparseable
-# without changing any value: a UTF-8 BOM, // and /* */ comments, and a
-# comma before a closing } or ]. Quote-aware, so a "https://..." value or a
-# comma inside a string survives; awk rather than sed because that state has
-# to be tracked character by character, and awk is POSIX everywhere this
-# runs. Prints the cleaned text on stdout and nothing on stderr.
-nut_json_sanitize() {
-  awk 'BEGIN { RS = "\001"; }
-    {
-      s = $0
-      sub(/^\357\273\277/, "", s)          # UTF-8 BOM
-      out = ""; n = length(s)
-      in_str = 0; esc = 0; line_c = 0; block_c = 0
-      for (i = 1; i <= n; i++) {
-        c = substr(s, i, 1); d = (i < n) ? substr(s, i + 1, 1) : ""
-        if (line_c)  { if (c == "\n") { line_c = 0; out = out c } ; continue }
-        if (block_c) { if (c == "*" && d == "/") { block_c = 0; i++ } ; continue }
-        if (in_str) {
-          out = out c
-          if (esc)            { esc = 0 }
-          else if (c == "\\") { esc = 1 }
-          else if (c == "\"") { in_str = 0 }
-          continue
-        }
-        if (c == "\"") { in_str = 1; out = out c; continue }
-        if (c == "/" && d == "/") { line_c = 1; i++; continue }
-        if (c == "/" && d == "*") { block_c = 1; i++; continue }
-        out = out c
-      }
-      # Second pass, same quote tracking: drop a comma whose next
-      # non-whitespace character closes an object or an array.
-      res = ""; n = length(out); in_str = 0; esc = 0
-      for (i = 1; i <= n; i++) {
-        c = substr(out, i, 1)
-        if (in_str) {
-          res = res c
-          if (esc)            { esc = 0 }
-          else if (c == "\\") { esc = 1 }
-          else if (c == "\"") { in_str = 0 }
-          continue
-        }
-        if (c == "\"") { in_str = 1; res = res c; continue }
-        if (c == ",") {
-          j = i + 1
-          while (j <= n && substr(out, j, 1) ~ /[ \t\r\n]/) j++
-          k = substr(out, j, 1)
-          if (k == "}" || k == "]") continue
-        }
-        res = res c
-      }
-      printf "%s", res
-    }' "$1" 2>/dev/null
-}
-
-# Silent repair of a settings.json this plugin cannot edit. Two cases:
-# valid JSON that is not an object (`[1,2]`, `"x"`, `null`) holds no
-# settings to keep, so it becomes `{}`; unparseable text is run through
-# nut_json_sanitize and written back ONLY when the result parses as an
-# object, so a file whose damage is anything but a BOM, a comment or a
-# trailing comma is left exactly as the user left it. No backup is written
-# by design: the repair either preserves every key or does not happen.
-# Returns 0 when the file is usable afterwards, 1 when it is not.
-nut_settings_recover() {
-  local cleaned
-  [ -f "$NUT_SETTINGS" ] || return 1
-  nut_settings_is_object && return 0
-  if jq -e . "$NUT_SETTINGS" >/dev/null 2>&1; then
-    nut_write_atomic '{}
-' "$NUT_SETTINGS" || return 1
-    return 0
-  fi
-  cleaned=$(nut_json_sanitize "$NUT_SETTINGS")
-  [ -n "$cleaned" ] || return 1
-  printf '%s' "$cleaned" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
-  nut_write_atomic "$cleaned" "$NUT_SETTINGS" || return 1
-  return 0
+# One sentence for every command that finds settings.json unusable, so the
+# skills can match a single marker ("so nutshell left it alone"). $1 is the
+# prefix that names the caller, $2 what to do once the file is fixed.
+nut_settings_refusal() {
+  echo "$1: $NUT_SETTINGS has comments, a trailing comma, a BOM or other content that is not a plain JSON object, so nutshell left it alone. Fix it, then $2." >&2
 }
 
 # A write that failed on permissions, where the file is ours to fix. Adds
@@ -594,9 +522,12 @@ nut_settings_make_writable() {
   [ -w "$NUT_SETTINGS" ]
 }
 
+# Add our statusLine key to settings.json, creating the file when absent.
+# Returns 0 when written, 1 when the file exists but is not a JSON object
+# (left untouched, byte for byte), 2 when the write itself failed.
 nut_settings_register() {
   [ -f "$NUT_SETTINGS" ] || printf '{}\n' > "$NUT_SETTINGS" 2>/dev/null
-  nut_settings_is_object || nut_settings_recover || return 1
+  nut_settings_is_object || return 1
   nut_jq_edit "$NUT_SETTINGS" --argjson v "$NUT_STATUSLINE_VALUE" '.statusLine = $v' 2>/dev/null && return 0
   nut_settings_make_writable || return 2
   nut_jq_edit "$NUT_SETTINGS" --argjson v "$NUT_STATUSLINE_VALUE" '.statusLine = $v' 2>/dev/null || return 2
@@ -609,7 +540,7 @@ nut_settings_register() {
 # thing (that leaves the key set and the row simply empty).
 nut_settings_unregister() {
   [ -f "$NUT_SETTINGS" ] || return 0
-  nut_settings_is_object || nut_settings_recover || return 1
+  nut_settings_is_object || return 1
   nut_jq_edit "$NUT_SETTINGS" 'del(.statusLine)' 2>/dev/null && return 0
   nut_settings_make_writable || return 2
   nut_jq_edit "$NUT_SETTINGS" 'del(.statusLine)' 2>/dev/null || return 2

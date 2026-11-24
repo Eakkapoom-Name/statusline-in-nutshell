@@ -54,8 +54,15 @@ Before the script runs:
 
 After the script ran:
 
-- stdout starts `reset:` and there is no second line: say nothing at all.
+- stdout starts `reset:`, there is no second line and no stderr: say
+  nothing at all.
   The row itself is the report.
+- stderr says `so nutshell left it alone`: the look was still restored,
+  but `settings.json` is not a plain JSON object, so nutshell cannot show
+  the statusline. Say "The default look is restored, but
+  `~/.claude/settings.json` has comments, a trailing comma, a BOM or other
+  content that is not a plain JSON object, so nutshell left it alone. Fix
+  it, then run `/nutshell:nutshell-active`." Never edit the file yourself.
 - stdout also says `still inactive`: "The default look is restored. The
   statusline is inactive, so run `/nutshell:nutshell-active` to show it."
 - stderr says `could not write`: "The reset did not complete. Check that

@@ -191,7 +191,10 @@ any file that differs from the bundled one and restores the registration.
 
 The registration step is skipped, and reported rather than forced, in three
 cases: the statusline is inactive, `settings.json` registers someone else's
-statusline, or `settings.json` is not a JSON object.
+statusline, or `settings.json` is not a JSON object. A `settings.json` with
+comments, a trailing comma, a BOM or any other content that is not a plain
+JSON object is never rewritten: nutshell leaves it byte for byte as it is and
+names the file to fix.
 
 ```bash
 /nutshell:nutshell-setup

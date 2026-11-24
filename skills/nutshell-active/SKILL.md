@@ -62,12 +62,12 @@ After the script ran:
   block, then "Foreign statusline plugin or skill, nothing was changed. Run
   `/nutshell:nutshell-active --force` to replace it." Stop, and do not run
   `--force` on your own.
-- stderr says `is not valid JSON, leaving it alone`: the script already
-  tried the silent repair (a BOM, `//` or `/* */` comments, a trailing
-  comma, or a file that is valid JSON but not an object) and the damage was
-  something else, so nothing was written. Say "`~/.claude/settings.json`
-  could not be parsed or repaired, the registration was aborted. Fix the
-  file, then run `/nutshell:nutshell-active` again." Stop.
+- stderr says `so nutshell left it alone`: `settings.json` is not a plain
+  JSON object, and the script wrote nothing to it or to `config.json`. Say
+  "`~/.claude/settings.json` has comments, a trailing comma, a BOM or other
+  content that is not a plain JSON object, so nutshell left it alone. Fix
+  it, then run `/nutshell:nutshell-active`." Stop, and never edit the file
+  yourself.
 - stderr says `could not update settings.json, statusline left off` with no
   JSON message above it: the script already retried after adding the owner
   write bit, so the cause is something it cannot fix (a read-only mount, a

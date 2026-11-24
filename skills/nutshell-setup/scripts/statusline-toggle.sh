@@ -173,6 +173,17 @@ require_active() {
 # settings.json
 # ---------------------------------------------------------------------------
 
+# A settings.json that exists but is not a JSON object (comments, a trailing
+# comma, a BOM, or valid JSON such as [1,2]) is never rewritten: say which
+# file to fix and stop, before anything else is written. $1 is what to run
+# once it is fixed. A missing settings.json is fine, `on` creates it.
+refuse_unusable_settings() {
+  [ -f "$NUT_SETTINGS" ] || return 0
+  nut_settings_is_object && return 0
+  nut_settings_refusal statusline-toggle "$1"
+  exit 1
+}
+
 # Add ("on") or remove ("off") the statusLine key. A settings.json that is
 # not a JSON object is refused rather than rewritten, so there is no edit
 # a backup would protect; nothing here writes a .bak.
@@ -183,7 +194,7 @@ set_statusline_key() {
   else
     nut_settings_register || rc=$?
   fi
-  [ "$rc" -eq 1 ] && echo "statusline-toggle: $NUT_SETTINGS is not valid JSON, leaving it alone" >&2
+  [ "$rc" -eq 1 ] && nut_settings_refusal statusline-toggle "run 'statusline-toggle.sh $1' again"
   return "$rc"
 }
 
@@ -241,6 +252,7 @@ print_one() {
 # ---------------------------------------------------------------------------
 
 cmd_off() {
+  refuse_unusable_settings "run 'statusline-toggle.sh off' again"
   if ! nut_statusline_is_ours; then
     refuse_foreign_statusline
     echo "Refusing to remove someone else's registration. Delete it yourself if" >&2
@@ -268,6 +280,7 @@ cmd_off() {
 }
 
 cmd_on() {
+  refuse_unusable_settings "run 'statusline-toggle.sh on' again"
   if ! nut_statusline_is_ours && [ "${1:-}" != "--force" ]; then
     echo "statusline-toggle: settings.json already registers a different statusline:" >&2
     echo "  $(jq -r '.statusLine.command // "(none)"' "$NUT_SETTINGS" 2>/dev/null)" >&2
@@ -410,6 +423,11 @@ cmd_reset() {
     def onoff: if . == true then "on" else "off" end;
     "session \(.session | onoff), cost \(.cost | onoff), workspace \(.workspace | onoff), emoji \(.emoji | onoff), mode \(.mode), color \(.color)"')
   echo "reset: default look restored ($look)."
+  # Reset never writes settings.json, but a file nutshell cannot register in
+  # leaves the restored look invisible, so it is reported all the same.
+  if [ -f "$NUT_SETTINGS" ] && ! nut_settings_is_object; then
+    nut_settings_refusal statusline-toggle "run 'statusline-toggle.sh on' to show the statusline"
+  fi
   if nut_config_is_disabled; then
     echo "statusline: still inactive. Run 'statusline-toggle.sh on' to show it."
   fi
@@ -448,13 +466,20 @@ cmd_uninstall() {
   # A registration that could not be removed stops everything here, before
   # a single file goes: deleting the scripts anyway would leave settings.json
   # pointing at a statusline.sh that no longer exists, with Claude Code's own
-  # footer still suppressed, under a message that claimed success.
+  # footer still suppressed, under a message that claimed success. A
+  # settings.json that is not a JSON object stops it the same way: whose
+  # statusLine it holds cannot even be read.
+  if [ -f "$NUT_SETTINGS" ] && ! nut_settings_is_object; then
+    nut_settings_refusal statusline-toggle "run 'statusline-toggle.sh uninstall --yes' again"
+    echo "Nothing was uninstalled; the scripts and the registration are still in place." >&2
+    exit 1
+  fi
   if nut_statusline_is_ours; then
     rc=0
     nut_settings_unregister || rc=$?
     if [ "$rc" -ne 0 ]; then
       if [ "$rc" -eq 1 ]; then
-        echo "statusline-toggle: $NUT_SETTINGS is not valid JSON, so the statusLine registration could not be removed." >&2
+        nut_settings_refusal statusline-toggle "run 'statusline-toggle.sh uninstall --yes' again"
       else
         echo "statusline-toggle: could not write $NUT_SETTINGS, so the statusLine registration could not be removed." >&2
       fi
