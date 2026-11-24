@@ -51,6 +51,12 @@ Emoji labels work the same way here:
 The cost is the figure Claude Code itself hands the statusline for the
 current session, so nothing is scanned or estimated to produce it.
 
+The context total is the model's window, unless you set an auto-compact
+window for that model with `/autocompact` (or `CLAUDE_CODE_AUTO_COMPACT_WINDOW`).
+Then the total, the percent and the bar count against that window instead,
+so 250k used of a 600k window reads `250.0k/600.0k tokens` at 42%. Left on
+`auto`, the row shows the model's window as before.
+
 Both layouts draw their values in one accent color, orange by default, and
 [`/nutshell:nutshell-color`](#nutshellnutshell-color) swaps it for a blue one.
 

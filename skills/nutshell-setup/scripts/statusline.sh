@@ -29,7 +29,7 @@
 # all. Forking is ~1ms on Linux and macOS but 150-210ms under the Cygwin
 # bash that Git for Windows ships, where an earlier version of this script
 # spent ~4s per render across ~50 forks and completed 0 renders out of 100.
-# So: ONE jq call assembles every field from stdin and all six state,
+# So: ONE jq call assembles every field from stdin and all eight state,
 # settings and catalog files, rendering uses `printf -v` rather than `$(...)` (a command
 # substitution is a fork), and the remaining external commands are counted
 # and justified where they appear.
@@ -406,8 +406,9 @@ as_epoch() {
 # ---------------------------------------------------------------------------
 # Input: one jq call for everything
 #
-# The payload from stdin plus all six files (config.json, settings.json,
-# the auth / rate / usage caches and the model catalog) are parsed, and the rate-window merge
+# The payload from stdin plus all eight files (config.json, the user,
+# project and local settings.json, the auth / rate / usage caches and the
+# model catalog) are parsed, and the rate-window merge
 # is computed, by a single jq invocation. This used to be five separate jq
 # calls plus a sixth for the merge; on Windows that alone was ~2s.
 #
@@ -538,6 +539,146 @@ def id_base($id): $id | rtrimstr("[1m]") | rtrimstr("[2m]") | split("-")
 # endpoint is what corrects the row with no message sent.
 (($account_usage.windows? | objects) // {}) as $account_usage_windows |
 (($account_usage.windows_at | numbers) // 0) as $account_usage_windows_at |
+
+# The auto-compact window. When one is set explicitly for the current model,
+# the context segment counts against it instead of the full model window:
+# the total becomes min(window, context_window_size), the same cap Claude
+# Code applies, and the percent and the bar are recomputed as
+# total_input_tokens / that limit, capped at 100. "auto", an absent or
+# unusable value, or one below the 100000 minimum is no explicit window,
+# and then both fields pass through untouched.
+#
+# The resolution follows the Claude Code binary (2.1.331):
+#   1 CLAUDE_CODE_AUTO_COMPACT_WINDOW wins when it parses. Trimmed, then a
+#     k or m suffix (any case) scales a decimal ("600k", "0.6M"); without a
+#     suffix it reads as a JS Number does: exponent form ("6e5"), grouped
+#     thousands ("600,000", "600_000"), else the leading digits of the
+#     string. A bare "600" is 600 tokens, not 600k. Claude Code raises a
+#     value under 100000 to that minimum; here it is no explicit window, so
+#     the row never invents a limit from a typo.
+#   2 Otherwise the settings scopes fold in order user, project, local. A
+#     scope with a top-level autoCompactWindow sets the default and drops
+#     the per-model entries of the scopes below it; a scope without one
+#     merges its modelSettings.<model>.autoCompactWindow entries over
+#     theirs. The answer is the entry for the model when there is one, even
+#     "auto", else the default. Settings take a JSON integer of at least
+#     100000, or "auto" per model only; a string such as "600k" is ignored.
+#   3 Model keys match after the same normalisation on both sides: lower
+#     case, the Bedrock "anthropic." prefix and "-v1:0" suffix and the
+#     Vertex "@date" dropped, then id_base (no [1m], no date part). Within
+#     one scope an exact key beats another spelling of the same model.
+# Project and local scopes are read from workspace.project_dir, the
+# directory the session started in. bash takes that path out of the raw
+# payload before this call (so no second jq), and passes it as
+# $settings_root; the two files count only when it equals the parsed field.
+# No regex, as above: every scan is explode and compare.
+def acw_ws: . == 32 or (. >= 9 and . <= 13) or . == 160 or . == 5760
+  or (. >= 8192 and . <= 8202) or . == 8232 or . == 8233 or . == 8239
+  or . == 8287 or . == 12288 or . == 65279;
+def acw_trim: explode
+  | ((first(range(length) as $i | select(.[$i] | acw_ws | not) | $i)) // length) as $start
+  | ((first(range(length - 1; -1; -1) as $i | select(.[$i] | acw_ws | not) | $i + 1)) // $start) as $end
+  | .[$start:$end] | implode;
+def acw_digits($codes; $from):
+  (first(range($from; $codes | length) | select($codes[.] < 48 or $codes[.] > 57))) // ($codes | length);
+# JS parseFloat: the longest numeric prefix, as {value, end, exponent}, or
+# null for NaN. Rebuilt into a plain string first, since tonumber rejects
+# forms like "6." or ".5" that JS reads.
+def acw_float($text):
+  ($text | explode) as $codes |
+  (if $codes[0] == 43 or $codes[0] == 45 then 1 else 0 end) as $int_start |
+  acw_digits($codes; $int_start) as $int_end |
+  (if $codes[$int_end] == 46 then acw_digits($codes; $int_end + 1) else $int_end end) as $frac_end |
+  (if $frac_end > $int_end then $text[$int_end + 1:$frac_end] else "" end) as $fraction |
+  if $int_end == $int_start and $fraction == "" then null
+  else
+    (if $codes[$frac_end] == 101 or $codes[$frac_end] == 69 then
+       (if $codes[$frac_end + 1] == 43 or $codes[$frac_end + 1] == 45 then $frac_end + 2 else $frac_end + 1 end) as $exp_start |
+       acw_digits($codes; $exp_start) as $exp_end |
+       (if $exp_end > $exp_start then $exp_end else null end)
+     else null end) as $exp_end |
+    ((if $codes[0] == 45 then "-" else "" end)
+     + (if $int_end > $int_start then $text[$int_start:$int_end] else "0" end)
+     + (if $fraction != "" then "." + $fraction else "" end)
+     + (if $exp_end != null then "e" + ($text[$frac_end + 1:$exp_end] | ltrimstr("+")) else "" end)) as $plain |
+    {value: ($plain | tonumber), end: ($exp_end // $frac_end), exponent: ($exp_end != null)}
+  end;
+# JS parseInt(text, 10): sign and leading digits, null for NaN.
+def acw_int($text):
+  ($text | explode) as $codes |
+  (if $codes[0] == 43 or $codes[0] == 45 then 1 else 0 end) as $start |
+  acw_digits($codes; $start) as $end |
+  if $end == $start then null
+  else ((if $codes[0] == 45 then "-" else "" end) + $text[$start:$end]) | tonumber end;
+# The strict forms Claude Code tries before parseInt: [] when neither
+# matches, [null] for an exponent form that is not an integer, else [n].
+def acw_strict($text):
+  if ($text | length) > 32 then []
+  else acw_float($text) as $float |
+    if $float != null and $float.exponent and $float.end == ($text | length) then
+      (if ($float.value | floor) == $float.value then [$float.value] else [null] end)
+    else
+      (if ($text[0:1] == "+" or $text[0:1] == "-") then $text[1:] else $text end) as $unsigned |
+      ($unsigned | explode) as $codes |
+      acw_digits($codes; 0) as $group |
+      (if $group >= 1 and $group <= 3 and $group < ($codes | length)
+          and any((95, 44, 160, 8239, 32); . == $codes[$group]) then
+         ($unsigned | split([$codes[$group]] | implode)) as $parts |
+         (if ($parts | length) >= 2
+             and all($parts[1:][]; length == 3 and (explode | all(.[]; . >= 48 and . <= 57)))
+          then [(($parts | join("")) | tonumber) * (if $text[0:1] == "-" then -1 else 1 end)]
+          else [] end)
+       else [] end)
+    end
+  end;
+def acw_env_window($raw):
+  ($raw | acw_trim) as $text |
+  ($text[-1:] | ascii_downcase) as $suffix |
+  (if $suffix == "m" then 1000000 elif $suffix == "k" then 1000 else null end) as $scale |
+  (if $scale != null then (acw_float($text) | if . == null then null else .value * $scale end)
+   else acw_strict($text) as $strict |
+     (if ($strict | length) > 0 then $strict[0] else acw_int($text) end)
+   end) as $tokens |
+  if $tokens == null then null
+  else ($tokens | round) as $rounded |
+    if $rounded > 9007199254740991 or $rounded < 100000 then null else $rounded end
+  end;
+def acw_setting: if type == "number" and . == floor and . >= 100000 then . else null end;
+# Each split is followed by a fallback: jq splits "" into [], not [""].
+def acw_key: tostring | ascii_downcase | (split("anthropic.") | last // "")
+  | (split("@") | .[0] // "") | split(":")
+  | if length <= 1 then .[0] // ""
+    else .[0] | split("-")
+      | (if length > 1 and (last | startswith("v"))
+            and ((last[1:] | explode) as $v | ($v | length) > 0 and all($v[]; . >= 48 and . <= 57))
+         then .[:-1] else . end)
+      | join("-") end
+  | id_base(.);
+def acw_scope_models:
+  [((.modelSettings | objects) // {}) | to_entries[]
+   | select((.value | type) == "object" and (.value | has("autoCompactWindow")))
+   | {raw: .key, key: (.key | acw_key),
+      value: (.value.autoCompactWindow | if . == "auto" then "auto" else acw_setting end)}
+   | select(.value != null)]
+  | reduce .[] as $entry ({};
+      if $entry.raw == $entry.key or (has($entry.key) | not) then .[$entry.key] = $entry.value else . end);
+(if $settings_root != "" and $settings_root == (($payload.workspace.project_dir // "") | tostring)
+ then [obj($project_settings_raw), obj($local_settings_raw)] else [] end) as $acw_workspace_scopes |
+(reduce ([$settings] + $acw_workspace_scopes)[] as $scope ({default: null, by_model: {}};
+   ($scope.autoCompactWindow | acw_setting) as $top |
+   ($scope | acw_scope_models) as $models |
+   if $top == null then .by_model += $models else {default: $top, by_model: $models} end)) as $acw_settings |
+(($payload.model.id // "") | acw_key) as $acw_model_key |
+(acw_env_window($auto_compact_env)
+ // (if ($acw_settings.by_model | has($acw_model_key)) then $acw_settings.by_model[$acw_model_key]
+     else $acw_settings.default end)) as $acw_window |
+(if ($acw_window | type) == "number" and ($context_total_tokens | type) == "number" and $context_total_tokens > 0
+ then ([$acw_window, $context_total_tokens] | min) else null end) as $acw_limit |
+# Rounded here: jq prints a tiny ratio in exponent form, and render_bar
+# reads only the digits before the first dot.
+(if $acw_limit == null or ($context_used_tokens | type) != "number" then $context_used_percentage
+ else ([$context_used_tokens * 100 / $acw_limit, 100] | min | round) end) as $context_used_percentage |
+(if $acw_limit == null then $context_total_tokens else $acw_limit end) as $context_total_tokens |
 
 # Token counts formatted here in exact integer arithmetic, so the common
 # render needs no awk fork at all. Rounding one decimal place from a
@@ -774,6 +915,27 @@ read_all() {
                 --arg payload_raw "$payload" --arg separator $'\x1f' )
   nut_jq_file_arg config_raw "$NUT_CONFIG"
   nut_jq_file_arg settings_raw "$NUT_SETTINGS"
+  # The project and local settings scopes, for the auto-compact window. Their
+  # directory is workspace.project_dir, taken out of the raw payload with
+  # parameter expansion so the single jq call stays single. Claude Code
+  # writes compact JSON; the spaced form is accepted too. Only "\\" is
+  # unescaped (a Windows path); a path that needed any other escape comes
+  # out different from the parsed field, and jq then ignores both files.
+  local settings_root=""
+  case "$payload" in
+    *'"project_dir":"'*) settings_root="${payload#*\"project_dir\":\"}" ;;
+    *'"project_dir": "'*) settings_root="${payload#*\"project_dir\": \"}" ;;
+  esac
+  settings_root="${settings_root%%\"*}"
+  case "$settings_root" in *\\*) settings_root="${settings_root//\\\\/\\}" ;; esac
+  if [ -n "$settings_root" ]; then
+    nut_jq_file_arg project_settings_raw "$settings_root/.claude/settings.json"
+    nut_jq_file_arg local_settings_raw "$settings_root/.claude/settings.local.json"
+  else
+    NUT_JQ_ARGS+=( --arg project_settings_raw "" --arg local_settings_raw "" )
+  fi
+  NUT_JQ_ARGS+=( --arg settings_root "$settings_root" \
+                 --arg auto_compact_env "${CLAUDE_CODE_AUTO_COMPACT_WINDOW-}" )
   nut_jq_file_arg auth_raw "$NUT_AUTH_CACHE"
   nut_jq_file_arg shared_rate_limit_raw "$NUT_SHARED_RATE_LIMIT_CACHE"
   nut_jq_file_arg account_usage_raw "$NUT_ACCOUNT_USAGE_CACHE"

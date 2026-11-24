@@ -74,6 +74,7 @@ run "kill paths, shim"   t_kill.sh mirror
 run "mode"               t_modeassert.sh
 run "rate freshness"     t_rate.sh
 run "absent window"      t_absent.sh
+run "compact window"     t_compact.sh
 # Both PATHs for the dependency suite: --plan resolves versions inside a
 # command substitution, which is the shape nut_timeout's non-GNU watcher had
 # to be fixed for, so the shim run is the one that matters.
