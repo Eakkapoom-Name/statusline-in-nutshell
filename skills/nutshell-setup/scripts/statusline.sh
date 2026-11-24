@@ -858,15 +858,16 @@ def show($window; $value):
   # windows, and a stale weekly number is worse than no number. Nothing here
   # ever renders a placeholder 0%.
   (if $account_usage_fable_live then (($account_usage_fable.percent | numbers) // 0) else "" end),
-  # The reset stamp comes from the usage endpoint cache, the same source as
-  # the percent above, so the row never pairs an endpoint percent with a
-  # payload reset. It is the all-models weekly window from that endpoint,
-  # the same weekly reset Fable shares; the own stamp of the Fable entry is the
-  # fallback when that window is absent or has expired. The payload
-  # rate_limits are never read here, so this stamp can sit minutes apart
-  # from the all-models weekly row when that row shows a payload reading.
+  # The reset stamp is the one the all-models weekly row renders: the
+  # resets_at of $picked_seven_day, whichever reading won there (payload,
+  # shared cache or endpoint). Fable shares that weekly reset, and taking it
+  # from the same pick keeps the two rows from drifting apart. They used to:
+  # the endpoint sends ISO stamps with fractional seconds, which the refresh
+  # script truncates, so a reset at 22:00:00 could arrive as 21:59:59 and
+  # render a minute before the whole-second payload stamp. Only when no live
+  # seven_day reading was picked does the own stamp of the Fable entry serve.
   (if $account_usage_fable_live
-   then ((live(clean($account_usage_windows["seven_day"])) | .resets_at) // $account_usage_fable_resets_at)
+   then ($picked_seven_day.resets_at // $account_usage_fable_resets_at)
    else "" end),
   $config_mode
 ] | map(tostring) | join($separator)

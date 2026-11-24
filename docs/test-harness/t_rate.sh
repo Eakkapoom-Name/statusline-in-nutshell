@@ -118,10 +118,12 @@ out=$(run '{"session_id":"s2","version":"2.1.0","model":{"display_name":"Opus 5"
 eq "the endpoint alone renders the weekly window" "$(w7 "$out")" "0"
 eq "the endpoint alone renders the 5h window"     "$(w5 "$out")" "2"
 
-# The weekly Fable row takes its reset from the usage endpoint cache, the
-# same source as its percent: the cache's all-models weekly window, then the
-# Fable entry's own stamp. Never the payload. Three resets a day or more
-# apart, so their minute-granular stamps cannot collide.
+# The weekly Fable row takes its reset from the reading the all-models
+# weekly row picked (payload, shared cache or endpoint), so the two rows
+# always show the same reset; the Fable entry's own stamp serves only when
+# no live weekly reading was picked. Its percent stays the endpoint's.
+# Three resets a day or more apart, so their minute-granular stamps cannot
+# collide.
 pw=$((now+259200)); cw=$((now+432000)); fw=$((now+518400))
 # usagef <7d window json, or empty for none> <Fable resets_at>
 usagef() {
@@ -145,25 +147,34 @@ sp=$(stamp "$pw"); sc=$(stamp "$cw"); sF=$(stamp "$fw")
 [ "$sp" != "$sc" ] && [ "$sc" != "$sF" ] && [ "$sp" != "$sF" ] && ok "the three test resets render distinct stamps" \
   || bad "distinct stamps" "[$sp] [$sc] [$sF]"
 
-# A fresh payload wins the weekly session row, yet the Fable row keeps the
-# endpoint's weekly reset.
+# A fresh payload wins the weekly session row, and the Fable row follows it
+# rather than the endpoint's weekly window.
 rate 2 41 $((now-600)) 5.0
 usagef '{"used_percentage":0,"resets_at":'"$cw"'}' "$fw"
 out=$(run "$(payw 9.0 "$pw")")
-eq "the weekly session row shows the payload reset" "$(s7 "$out")" "$sp"
-eq "the Fable row shows the endpoint weekly reset"  "$(sf "$out")" "$sc"
-eq "the Fable percent is the endpoint's, unchanged" "$(pf "$out")" "61"
+eq "the weekly session row shows the payload reset"  "$(s7 "$out")" "$sp"
+eq "the Fable row shows the same payload reset"      "$(sf "$out")" "$sp"
+eq "the Fable percent is the endpoint's, unchanged"  "$(pf "$out")" "61"
 
-# No all-models weekly window in the endpoint cache: Fable's own stamp.
+# An idle tab where the endpoint is newer than the cache: both rows take the
+# endpoint's weekly reset, and the frozen payload reset shows in neither.
 rate 2 41 $((now-600)) 5.0
+usagef '{"used_percentage":0,"resets_at":'"$cw"'}' "$fw"
+out=$(run "$(payw 5.0 "$pw")")
+eq "an idle tab's weekly row shows the endpoint reset" "$(s7 "$out")" "$sc"
+eq "and the Fable row shows the same reset"            "$(sf "$out")" "$sc"
+
+# No live weekly reading anywhere: Fable's own stamp, with no weekly row.
+rm -f "$ST/shared_rate_limit_cache.json"
 usagef '' "$fw"
-out=$(run "$(payw 9.0 "$pw")")
-eq "with no endpoint weekly window the Fable row shows its own reset" "$(sf "$out")" "$sF"
+out=$(run '{"session_id":"s3","version":"2.1.0","model":{"display_name":"Opus 5"},"workspace":{"current_dir":"'"$HOME"'"},"cost":{"total_cost_usd":0}}')
+eq "with no weekly reading the weekly row is absent"           "$(s7 "$out")" "none"
+eq "with no weekly reading the Fable row shows its own reset"  "$(sf "$out")" "$sF"
 
-# An expired endpoint weekly window falls back the same way.
-rate 2 41 $((now-600)) 5.0
+# An expired endpoint weekly window is no reading either.
+rm -f "$ST/shared_rate_limit_cache.json"
 usagef '{"used_percentage":0,"resets_at":'"$gone"'}' "$fw"
-out=$(run "$(payw 9.0 "$pw")")
+out=$(run '{"session_id":"s3","version":"2.1.0","model":{"display_name":"Opus 5"},"workspace":{"current_dir":"'"$HOME"'"},"cost":{"total_cost_usd":0}}')
 eq "an expired endpoint weekly window falls back to the Fable reset" "$(sf "$out")" "$sF"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" -eq 0 ]
