@@ -392,7 +392,7 @@ cmd_color() {
 # this command: it must not recreate or rewrite the config it may be about
 # to remove, and the warn path must leave every file untouched.
 cmd_uninstall() {
-  local yes=false purge=false a f
+  local yes=false purge=false old_script_ours=false a f
   for a in "$@"; do
     case "$a" in
       --yes) yes=true ;;
@@ -407,6 +407,9 @@ cmd_uninstall() {
     echo "  statusline-toggle.sh uninstall --yes [--purge]" >&2
     exit 1
   fi
+  # Asked before anything is deleted: the old toggle and config this checks
+  # for are removed further down.
+  nut_legacy_script_is_ours && old_script_ours=true
   nut_settings_unregister || true
   # Clear "disabled" before leaving. A non-purge uninstall keeps the config,
   # and a config that still says disabled would make a later reinstall skip
@@ -434,8 +437,10 @@ cmd_uninstall() {
   done
   # Files a pre-0.3.1 install left directly in ~/.claude. Exact names only,
   # never a glob, and only the ones this plugin is known to have written.
-  rm -f "$NUT_CLAUDE_DIR/statusline.sh" \
-        "$NUT_CLAUDE_DIR/cost_cache_refresh.sh" \
+  # statusline.sh only with evidence it is ours: the name is also a common
+  # one for a hand-written statusline, and that file is the user's.
+  [ "$old_script_ours" = true ] && rm -f "$NUT_OLD_SCRIPT"
+  rm -f "$NUT_CLAUDE_DIR/cost_cache_refresh.sh" \
         "$NUT_CLAUDE_DIR/.statusline-sync.lock" \
         "$NUT_CLAUDE_DIR/.cost_cache.lock" \
         "$NUT_CLAUDE_DIR/.auth_cache.json.lock"
