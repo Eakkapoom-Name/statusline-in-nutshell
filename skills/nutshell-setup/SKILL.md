@@ -163,10 +163,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/hooks/sync.sh"
 If that path does not resolve, run `bash "${CLAUDE_SKILL_DIR}/../../hooks/sync.sh"`.
 
 The script is idempotent, silent, and always exits 0. It creates the
-directories, migrates a pre-0.3.1 install (moves the config, state files
-and extra ledgers from `~/.claude/` into `nutshell/`, deletes the old
-lock files, and deletes the old scripts only once every new file is in
-place), copies each of the five files into `bin/` when it is missing or
+directories, copies each of the five files into `bin/` when it is missing or
 differs from the bundled copy, deletes a `bin/` script an older version
 installed that is no longer shipped, and registers
 `"statusLine": {"type": "command", "command": "bash ~/.claude/nutshell/bin/statusline.sh", "refreshInterval": 1}`
@@ -177,6 +174,9 @@ inactive on purpose), when `settings.json` registers a statusline that
 is not ours, or when `settings.json` cannot be parsed or repaired. It
 never touches `config.json` or anything under `state/`, and never writes a
 `.bak`: the settings repair writes only when every key survives it.
+Outside `~/.claude/nutshell/` it creates, edits or deletes nothing but its
+own `statusLine` key, so a file such as a hand-written
+`~/.claude/statusline.sh` is never touched.
 
 ### 4. Check the result yourself, since the script reports nothing
 

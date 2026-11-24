@@ -3,7 +3,7 @@
 #
 # Sourced, never executed. It defines the paths this plugin owns, the one
 # copy of the settings.json registration, and the handful of helpers the
-# scripts share (atomic writes, config and settings reads, the pre-0.3.1
+# scripts share (atomic writes, config and settings reads, the renamed-cache
 # migration). It has no side effects beyond definitions and prints nothing:
 # statusline.sh sources it once a second, and the hooks source it under
 # `exec 2>/dev/null`.
@@ -125,30 +125,6 @@ case "$OSTYPE" in
   *)                    NUT_REFRESH_INTERVAL=1 ;;
 esac
 NUT_STATUSLINE_VALUE='{"type":"command","command":"bash ~/.claude/nutshell/bin/statusline.sh","refreshInterval":'"$NUT_REFRESH_INTERVAL"'}'
-
-# ---------------------------------------------------------------------------
-# The pre-0.3.1 layout, when all of this sat loose in ~/.claude. Needed by
-# the migration below and by `uninstall --purge`, which sweeps an install
-# that was never migrated.
-# ---------------------------------------------------------------------------
-NUT_OLD_CONFIG="$NUT_CLAUDE_DIR/statusline.config.json"
-# State files: the new name is the old one without its leading dot. The
-# rate cache then gets its current name from nut_migrate_renamed_state.
-NUT_OLD_STATE_FILES=".cost_cache.json .cost_ledger.json .cost_baseline.json .rate_cache.json .auth_cache.json"
-NUT_OLD_LOCK_FILES=".cost_cache.lock .auth_cache.json.lock .statusline-sync.lock"
-NUT_OLD_SCRIPTS="statusline.sh statusline-toggle.sh cost_cache_refresh.sh"
-# ~/.claude/statusline.sh is also the obvious name for a hand-written
-# statusline, so that one path alone proves nothing (see
-# nut_legacy_script_is_ours). Every version before 0.3.1 opened the script
-# with this line and read statusline.config.json from it.
-NUT_OLD_SCRIPT="$NUT_CLAUDE_DIR/statusline.sh"
-NUT_OLD_SCRIPT_HEADER='# Claude Code statusLine script'
-# Backups written by versions before 0.3.1, which is when this plugin
-# stopped writing any. settings.json.bak may be a user's only copy of their
-# pre-install settings, so only an explicit --purge ever removes these.
-NUT_OLD_BAK_FILES="statusline.sh.bak statusline-toggle.sh.bak cost_cache_refresh.sh.bak settings.json.bak"
-# Extra ledgers: ${NUT_OLD_EXTRA_LEDGER_PREFIX}<source>.json
-NUT_OLD_EXTRA_LEDGER_PREFIX="$NUT_CLAUDE_DIR/.cost_ledger_"
 
 # ---------------------------------------------------------------------------
 # Directories
@@ -501,45 +477,19 @@ nut_registered_value() {
 
 # True when settings.json's statusLine is absent, or is one we installed.
 # Anyone can register a statusline (Claude Code's own /statusline writes
-# one from your shell PS1), and someone else's registration must never be
+# one from your shell PS1, and ~/.claude/statusline.sh is a common name for
+# a hand-written one), and someone else's registration must never be
 # deleted or overwritten. Ours is recognised by the command pointing at our
-# script, at the current path or at the pre-0.3.1 one: an old install has
-# to be recognised as ours, or `on`, `off`, `uninstall` and the sync hook
-# would all refuse to touch it.
-#
-# The pre-0.3.1 path counts only when the script there is ours
-# (nut_legacy_script_is_ours), or is gone: a registration pointing at a
-# missing file is what a sync leaves between deleting the old script and
-# repointing the key, and there is no user file left to protect.
+# script under ~/.claude/nutshell/bin/, and nothing else: no other path in
+# ~/.claude is ours to claim.
 nut_statusline_is_ours() {
   local cmd
   [ -f "$NUT_SETTINGS" ] || return 0
   cmd=$(nut_registered_command)
   case "$cmd" in
     ''|*'/.claude/nutshell/bin/statusline.sh'*) return 0 ;;
-    *'/.claude/statusline.sh'*)
-      [ -e "$NUT_OLD_SCRIPT" ] || return 0
-      nut_legacy_script_is_ours
-      ;;
     *) return 1 ;;
   esac
-}
-
-# True when ~/.claude/statusline.sh is a pre-0.3.1 nutshell install rather
-# than a user's own statusline that happens to share the name. Needs real
-# evidence: another file only that install wrote (its toggle, its cost
-# refresher, its config), or the script's own opening comment together with
-# its config path. Without either the file is the user's, and nothing here
-# may delete it or take over its registration. Callers that migrate or
-# delete the other legacy files ask before doing so, since those files are
-# part of the evidence.
-nut_legacy_script_is_ours() {
-  [ -f "$NUT_OLD_SCRIPT" ] || return 1
-  [ -e "$NUT_OLD_CONFIG" ] && return 0
-  [ -e "$NUT_CLAUDE_DIR/statusline-toggle.sh" ] && return 0
-  [ -e "$NUT_CLAUDE_DIR/cost_cache_refresh.sh" ] && return 0
-  [ "$(sed -n 2p "$NUT_OLD_SCRIPT" 2>/dev/null)" = "$NUT_OLD_SCRIPT_HEADER" ] \
-    && grep -q 'statusline\.config\.json' "$NUT_OLD_SCRIPT" 2>/dev/null
 }
 
 # True when settings.json exists and is a JSON object. Anything else
@@ -666,41 +616,17 @@ nut_settings_unregister() {
 }
 
 # ---------------------------------------------------------------------------
-# Migration from the pre-0.3.1 layout
+# Migration inside ~/.claude/nutshell/
 # ---------------------------------------------------------------------------
 
 # Move $1 to $2 when $1 exists and $2 does not. Move, never copy: two files
-# claiming to be the same ledger is worse than one in the wrong place. The
+# claiming to be the same cache is worse than one under the wrong name. The
 # destination check is what lets a half-migrated install finish cleanly and
 # an already-migrated one stay untouched.
 nut_migrate_one() {
   [ -e "$1" ] || return 0
   [ -e "$2" ] && return 0
   mv "$1" "$2" 2>/dev/null
-}
-
-# Move the config, the state files and the extra ledgers from ~/.claude
-# into ~/.claude/nutshell/, and delete the old locks (they hold nothing).
-# The old scripts are NOT touched here: the installer deletes them only
-# once every new script is in place, since until then they are the working
-# install. Callers hold the sync lock so two sessions starting together
-# cannot both migrate.
-nut_migrate_legacy_layout() {
-  local f old
-  nut_migrate_one "$NUT_OLD_CONFIG" "$NUT_CONFIG"
-  for f in $NUT_OLD_STATE_FILES; do
-    nut_migrate_one "$NUT_CLAUDE_DIR/$f" "$NUT_STATE_DIR/${f#.}"
-  done
-  # The source names are not ours to know, hence a glob. The tool writing
-  # one has to be repointed at the new path by its owner; this rescues the
-  # history, it cannot redirect a third-party writer.
-  for old in "$NUT_OLD_EXTRA_LEDGER_PREFIX"*.json; do
-    [ -f "$old" ] || continue
-    nut_migrate_one "$old" "$NUT_EXTRA_LEDGER_PREFIX${old#"$NUT_OLD_EXTRA_LEDGER_PREFIX"}"
-  done
-  for f in $NUT_OLD_LOCK_FILES; do
-    rm -f "$NUT_CLAUDE_DIR/$f" 2>/dev/null
-  done
 }
 
 # Give the two caches the names they took after 0.3.6 (rate_cache.json and

@@ -26,8 +26,8 @@ an explicit request to wipe config and cost history, as the purge variant.
    any cost history an older version left, are kept. Proceed?" For the purge variant, ask instead: "This removes the
    statusline registration and the whole ~/.claude/nutshell/ directory, so
    your toggle config and caches go too, including any cost history and
-   cost ledgers an older version or another tool left and any .bak files left by versions before 0.3.1.
-   Proceed?" Wait for an answer.
+   cost ledgers an older version or another tool left. Nothing outside
+   ~/.claude/nutshell/ is deleted. Proceed?" Wait for an answer.
 3. Only after yes, run one of:
 
 ```bash

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # hooks/sync.sh: SessionStart hook. Installs or refreshes the scripts under
-# ~/.claude/nutshell/bin/, migrates a pre-0.3.1 install, and registers the
-# statusLine command in settings.json. The nutshell-setup skill runs this
+# ~/.claude/nutshell/bin/ and registers the statusLine command in
+# settings.json. Outside ~/.claude/nutshell/ it touches nothing but that one
+# key, and only while the key is absent or already ours. The nutshell-setup skill runs this
 # same script as the mid-session repair.
 #
 # Never touches user data: config.json and everything under state/, except
@@ -27,14 +28,6 @@ mkdir -p "$NUT_BIN_DIR" "$NUT_STATE_DIR" "$NUT_LOCK_DIR" 2>/dev/null
 # too, where flock is absent.
 nut_lock_acquire "$NUT_SYNC_LOCK" "$NUT_LOCK_STALE_SYNC" || exit 0
 
-# Decide now whether ~/.claude/statusline.sh is a pre-0.3.1 install or a
-# user's own script of the same name: the migration below moves the old
-# config away, and that config is part of the evidence.
-old_script_ours=0
-nut_legacy_script_is_ours && old_script_ours=1
-
-nut_migrate_legacy_layout
-
 # Copy each bundled script into bin/ when missing or different. Copy to a
 # same-directory staging name, chmod it, then rename into place: a running
 # session renders about once a second, so a direct cp onto the live file
@@ -50,23 +43,15 @@ for f in $NUT_INSTALLED_FILES; do
   fi
 done
 
-# Only now drop the pre-0.3.1 scripts, once bin/ holds every new one. If a
-# copy above failed (full disk, unreadable source) the old scripts are still
-# the working install, and deleting them first would leave the user with
-# neither. Deleted rather than moved: a local edit to one of them was
-# already unrecoverable, since every sync replaces them from the bundle.
+# Only once bin/ holds every current script, drop the ones an earlier
+# version put there that nothing runs any more. If a copy above failed (full
+# disk, unreadable source) the old scripts are still the working install,
+# and deleting them first would leave the user with neither.
 all_installed=1
 for f in $NUT_INSTALLED_FILES; do
   [ -x "$NUT_BIN_DIR/$f" ] || all_installed=0
 done
 if [ "$all_installed" -eq 1 ]; then
-  for f in $NUT_OLD_SCRIPTS; do
-    # A user's own ~/.claude/statusline.sh is never ours to delete.
-    [ "$f" = statusline.sh ] && [ "$old_script_ours" -eq 0 ] && continue
-    rm -f "$NUT_CLAUDE_DIR/$f" 2>/dev/null
-  done
-  # Scripts an earlier version put in bin/ that nothing runs any more. Same
-  # rule as above: only once the current set is complete.
   for f in $NUT_RETIRED_BIN_FILES; do
     rm -f "$NUT_BIN_DIR/$f" 2>/dev/null
   done
@@ -94,10 +79,9 @@ else
 fi
 # Never take over a statusline someone else registered (Claude Code's own
 # /statusline writes one from your shell PS1, and a hand-written
-# ~/.claude/statusline.sh shares the pre-0.3.1 path). Ours, at either the
-# current path or the pre-0.3.1 one, is re-registered whenever it differs
-# from the wanted value, which is also what repoints an old install at the
-# new path and what restores a deleted refreshInterval.
+# ~/.claude/statusline.sh is someone else's too). Ours is re-registered
+# whenever it differs from the wanted value, which is what restores a
+# deleted refreshInterval.
 nut_statusline_is_ours || exit 0
 want=$(printf '%s' "$NUT_STATUSLINE_VALUE" | jq -c .)
 [ "$(nut_registered_value)" = "$want" ] || nut_settings_register

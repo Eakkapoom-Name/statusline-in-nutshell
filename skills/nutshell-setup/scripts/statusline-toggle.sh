@@ -392,7 +392,7 @@ cmd_color() {
 # this command: it must not recreate or rewrite the config it may be about
 # to remove, and the warn path must leave every file untouched.
 cmd_uninstall() {
-  local yes=false purge=false old_script_ours=false a f
+  local yes=false purge=false a f
   local removed="removed the statusline registration and the scripts under ~/.claude/nutshell/bin/"
   for a in "$@"; do
     case "$a" in
@@ -408,9 +408,6 @@ cmd_uninstall() {
     echo "  statusline-toggle.sh uninstall --yes [--purge]" >&2
     exit 1
   fi
-  # Asked before anything is deleted: the old toggle and config this checks
-  # for are removed further down.
-  nut_legacy_script_is_ours && old_script_ours=true
   # Someone else's registration stays, exactly as `off` refuses to delete
   # it: the user switched to another statusline, or had one before
   # installing this plugin. The scripts still go; the line says what stayed.
@@ -443,15 +440,9 @@ cmd_uninstall() {
   for f in $NUT_INSTALLED_FILES $NUT_RETIRED_BIN_FILES; do
     [ "$f" = statusline-toggle.sh ] || rm -f "$NUT_BIN_DIR/$f"
   done
-  # Files a pre-0.3.1 install left directly in ~/.claude. Exact names only,
-  # never a glob, and only the ones this plugin is known to have written.
-  # statusline.sh only with evidence it is ours: the name is also a common
-  # one for a hand-written statusline, and that file is the user's.
-  [ "$old_script_ours" = true ] && rm -f "$NUT_OLD_SCRIPT"
-  rm -f "$NUT_CLAUDE_DIR/cost_cache_refresh.sh" \
-        "$NUT_CLAUDE_DIR/.statusline-sync.lock" \
-        "$NUT_CLAUDE_DIR/.cost_cache.lock" \
-        "$NUT_CLAUDE_DIR/.auth_cache.json.lock"
+  # Nothing outside ~/.claude/nutshell/ is deleted, whatever its name: a
+  # file directly in ~/.claude (a statusline.sh, a .bak) may be the user's,
+  # and this script cannot tell.
   if [ "$purge" = true ]; then
     rm -f "$NUT_CONFIG" \
           "$NUT_COST_CACHE" "$NUT_COST_LEDGER" "$NUT_COST_BASELINE" \
@@ -462,23 +453,13 @@ cmd_uninstall() {
     # the source names are not ours to know; with no match the literal pattern reaches rm -f, which
     # ignores a path that does not exist.
     rm -f "$NUT_EXTRA_LEDGER_PREFIX"*.json
-    # And the pre-0.3.1 equivalents of all of the above, for an install that
-    # was never migrated (or that kept writing to the old paths), plus the
-    # .bak files those versions wrote. settings.json.bak in particular may
-    # hold a user's only copy of their pre-install settings, so only an
-    # explicit --purge takes it.
-    rm -f "$NUT_OLD_CONFIG"
-    for f in $NUT_OLD_STATE_FILES $NUT_OLD_LOCK_FILES $NUT_OLD_BAK_FILES; do
-      rm -f "$NUT_CLAUDE_DIR/$f"
-    done
-    rm -f "$NUT_OLD_EXTRA_LEDGER_PREFIX"*.json
   fi
   if [ "$purge" = true ]; then
-    echo "uninstalled: $removed, and purged config/cost/lock files plus any .bak files left by versions before 0.3.1."
+    echo "uninstalled: $removed, and purged config/cost/lock files."
   else
-    echo "uninstalled: $removed. Config, shared rate-limit cache, account usage cache, auth cache, any cost history an older version left and any .bak files from versions before 0.3.1 were kept."
+    echo "uninstalled: $removed. Config, shared rate-limit cache, account usage cache, auth cache and any cost history an older version left were kept."
   fi
-  rm -f "$NUT_BIN_DIR/statusline-toggle.sh" "$NUT_CLAUDE_DIR/statusline-toggle.sh"
+  rm -f "$NUT_BIN_DIR/statusline-toggle.sh"
   # Drop the directories once their contents are gone. rmdir, never `rm -r`:
   # it removes bin/, state/, locks/ and nutshell/ only while they are empty,
   # so anything unexpected in there (a file a future version writes,

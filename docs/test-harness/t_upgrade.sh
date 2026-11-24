@@ -62,15 +62,10 @@ jq -e '.statusLine.command | test("statusline.sh")' "$HOME/.claude/settings.json
 printf '{}\n' > "$ST/rate_cache.json"; printf '{}\n' > "$ST/usage_cache.json"
 : > "$LK/usage_cache.lock"; : > "$LK/usage_cache.lock.held"
 
-# A plain uninstall must sweep the pre-0.3.1 locks in ~/.claude too, or they
-# outlive the "locks go in both paths" rule. It deletes the toggle script it
-# runs from, so run from a copy of bin/ and let the purge below reuse it.
-: > "$HOME/.claude/.cost_cache.lock"; : > "$HOME/.claude/.auth_cache.json.lock"; : > "$HOME/.claude/.statusline-sync.lock"
+# The uninstall deletes the toggle script it runs from, so run from a copy
+# of bin/ and let the purge below reuse it.
 cp -r "$BIN" "$HOME/bincopy"
 bash "$HOME/bincopy/statusline-toggle.sh" uninstall --yes >/dev/null 2>&1
-[ ! -e "$HOME/.claude/.cost_cache.lock" ] && [ ! -e "$HOME/.claude/.auth_cache.json.lock" ] && [ ! -e "$HOME/.claude/.statusline-sync.lock" ] \
-  && ok "a non-purge uninstall removes the pre-0.3.1 lock files" \
-  || bad "upgrade" "old locks left: $(ls -A "$HOME/.claude" | grep lock | tr '\n' ' ')"
 [ -z "$(ls -A "$LK" 2>/dev/null)" ] && ok "a non-purge uninstall leaves no lock in locks/" || bad "upgrade" "locks/ holds: $(ls -A "$LK" | tr '\n' ' ')"
 
 bash "$HOME/bincopy/statusline-toggle.sh" uninstall --yes --purge >/dev/null 2>&1

@@ -430,27 +430,22 @@ next session.
 
 By default the uninstall keeps `config.json`, the shared rate-limit cache, the
 account usage cache, the auth cache and any cost history an older version left
-behind. It still removes every lock file, any loose scripts left by a
-pre-0.3.1 install, and the `disabled` flag in the config it keeps, so a later
-reinstall does not come back inactive.
+behind. It still removes every lock file, and the `disabled` flag in the
+config it keeps, so a later reinstall does not come back inactive.
 
 Ask for a purge, or pass `--purge`, to wipe those too: the whole
 `~/.claude/nutshell/` directory goes, including the retired cost files and
-any `ledger_<source>.json` written by another tool, along with the four
-`.bak` files that versions before 0.3.1 left in `~/.claude/`. Only the
+any `ledger_<source>.json` written by another tool. Nothing outside
+`~/.claude/nutshell/` is deleted, so a file such as a hand-written
+`~/.claude/statusline.sh` survives. Only the
 `statusLine` key is removed from `settings.json`; the rest of the file is left
 alone. If that key registers a different statusline, not nutshell's, it stays
-too, and the uninstall says so. The directories are removed with `rmdir`, never a recursive delete, so
-anything unexpected inside survives.
-
-A non-purge uninstall keeps those `.bak` files on purpose: `settings.json.bak`
-may be your only copy of the settings you had before installing. Nothing writes
-a new one, so once they are gone they stay gone.
+too, and the uninstall says so. The directories are removed with `rmdir`,
+never a recursive delete, so anything unexpected inside survives.
 
 If you would rather not go through the skill, this is the rough equivalent of a
 purge. Remove the plugin from `/plugin` afterwards, or the hook puts everything
-back at the next session start. It does not sweep the files a pre-0.3.1 install
-left loose in `~/.claude/`; the skill does.
+back at the next session start.
 
 ```bash
 rm -r ~/.claude/nutshell
