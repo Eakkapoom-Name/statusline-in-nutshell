@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # hooks/sync.sh: SessionStart hook. Installs or refreshes the scripts under
 # ~/.claude/nutshell/bin/ and registers the statusLine command in
-# settings.json. Outside ~/.claude/nutshell/ it touches nothing but that one
-# key, and only while the key is absent or already ours. The nutshell-setup skill runs this
+# settings.json. Outside ~/.claude/nutshell/ it writes nothing but that one
+# key, and only while the key is absent or already ours. The one exception
+# is the settings repair below (nut_settings_recover), which rewrites a
+# settings.json that does not parse as an object, keeping every key. The nutshell-setup skill runs this
 # same script as the mid-session repair.
 #
 # Never touches user data: config.json and everything under state/, except

@@ -175,8 +175,8 @@ is not ours, or when `settings.json` cannot be parsed or repaired. It
 never touches `config.json` or anything under `state/`, and never writes a
 `.bak`: the settings repair writes only when every key survives it.
 Outside `~/.claude/nutshell/` it creates, edits or deletes nothing but its
-own `statusLine` key, so a file such as a hand-written
-`~/.claude/statusline.sh` is never touched.
+own `statusLine` key and the settings repair just described, so a file such
+as a hand-written `~/.claude/statusline.sh` is never touched.
 
 ### 4. Check the result yourself, since the script reports nothing
 
